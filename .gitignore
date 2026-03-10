@@ -1,0 +1,7 @@
+result
+result-*
+*.lock
+.direnv/
+.secrets/
+secrets/*.age
+!secrets/.gitkeep

@@ -1,0 +1,28 @@
+# We use sops with kubernetes, agenix with Nix.
+keys:
+  - "admins": &admins
+      - &sini E822121B6A3D7FC6 # gpg --list-keys --with-colons --with-fingerprint
+  # NOTE: For host keys: nix-shell -p ssh-to-age --run 'cat /etc/ssh/ssh_host_ed25519_key.pub | ssh-to-age'
+  - "envs": &envs
+      - &prod age1702hgudfz8y5ms3m4fukvvjhll7w9yeqk4c37rhy4hkm63cyg4emzz5rfkqfdgffc
+      - &dev age1v9fv8xdeektkl6uanpttlcw8qt4c37rhy4hkm63cyg4emzz5rfkqfdgffc
+creation_rules:
+  #path should be relative to location of this file (.sops.yaml)
+  # This is for our master kubernetes keys keys
+  - path_regex: .*\.enc\.ya?ml$
+    key_groups:
+      - pgp: *admins
+  # Secrets keyed for Production environments
+  - path_regex: .*prod.*/(SopsS|S)ecret-.*\.ya?ml$
+    encrypted_regex: ^(data|stringData)$
+    mac-only-encrypted: true
+    key_groups:
+      - age:
+          - *prod
+  # Secrets keyed for the dev environment
+  - path_regex: .*dev.*/(SopsS|S)ecret-.*\.ya?ml$
+    encrypted_regex: ^(data|stringData)$
+    mac-only-encrypted: true
+    key_groups:
+      - age:
+          - *dev
