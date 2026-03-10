@@ -1,0 +1,172 @@
+{ agenix-rekey, nixpkgs }:
+{
+  lib,
+  config,
+  pkgs,
+  ...
+}:
+let
+  inherit (lib)
+    mkOption
+    types
+    literalExpression
+    ;
+
+  cfg = config.age;
+
+  # agenix-rekey's module expects nixpkgs as first arg, then returns the module
+  agenixRekeyModule = import (agenix-rekey + "/modules/agenix-rekey.nix") nixpkgs;
+
+in
+{
+  # Import agenix-rekey's module to get all standard options
+  imports = [
+    agenixRekeyModule
+  ];
+
+  # Stub out NixOS-specific options that agenix-rekey uses
+  # but aren't available in nixidy's module system
+  options = {
+    assertions = mkOption {
+      type = types.listOf types.unspecified;
+      internal = true;
+      default = [ ];
+    };
+
+    warnings = mkOption {
+      type = types.listOf types.str;
+      internal = true;
+      default = [ ];
+    };
+  };
+
+  # Provide default config for agenix-rekey's deprecated rekey.secrets
+  config.rekey.secrets = lib.mkDefault { };
+
+  # Extend age.secrets submodule with SOPS-specific options
+  # The module system will automatically merge these with agenix-rekey's existing options
+  options.age = {
+    secrets = mkOption {
+      type = types.attrsOf (
+        types.submodule (
+          { name, config, ... }:
+          {
+            options = {
+              # Stub for agenix's file option (not used in nixidy, but agenix-rekey sets it)
+              file = mkOption {
+                type = types.nullOr types.path;
+                internal = true;
+                default = null;
+              };
+
+              # SOPS-specific options
+              sopsOutput = mkOption {
+                type = types.nullOr (
+                  types.submodule {
+                    options = {
+                      file = mkOption {
+                        type = types.str;
+                        description = ''
+                          Which SOPS file to write this secret into.
+                          For example, "databases" will create databases.enc.yaml
+                        '';
+                      };
+
+                      key = mkOption {
+                        type = types.str;
+                        default = name;
+                        defaultText = literalExpression "name";
+                        description = ''
+                          YAML key within the SOPS file for this secret.
+                          Only used for str and base64 formats (not binary).
+                        '';
+                      };
+
+                      format = mkOption {
+                        type = types.enum [
+                          "str"
+                          "base64"
+                          "binary"
+                        ];
+                        default = "str";
+                        description = ''
+                          Format determines encoding before SOPS encryption:
+                          - str: Plain string (for Kubernetes stringData)
+                          - base64: Base64 encoded (for Kubernetes data field)
+                          - binary: Entire file encrypted as binary (no YAML wrapping)
+                        '';
+                      };
+                    };
+                  }
+                );
+                default = null;
+                description = ''
+                  SOPS output configuration for this secret.
+                  If null, this secret will not be converted to SOPS format.
+                '';
+              };
+
+              sopsRef = mkOption {
+                type = types.str;
+                readOnly = true;
+                default =
+                  if config.sopsOutput == null then
+                    throw "age.secrets.${name}.sopsRef: sopsOutput must be defined to compute sopsRef"
+                  else
+                    let
+                      # Convert outputDir to string without checking existence
+                      outputDirStr = builtins.unsafeDiscardStringContext (toString cfg.sops.outputDir);
+                    in
+                    if config.sopsOutput.format == "binary" then
+                      "ref+sops://${outputDirStr}/${config.sopsOutput.file}.enc"
+                    else
+                      "ref+sops://${outputDirStr}/${config.sopsOutput.file}.enc.yaml#${config.sopsOutput.key}";
+                defaultText = literalExpression ''
+                  if format == "binary"
+                  then "ref+sops://''${outputDir}/''${file}.enc"
+                  else "ref+sops://''${outputDir}/''${file}.enc.yaml#''${key}"
+                '';
+                description = ''
+                  The vals URI for referencing this secret in nixidy manifests.
+                  This is a computed read-only attribute based on sopsOutput configuration.
+
+                  Use this in your Kubernetes Secret definitions like:
+                    stringData.password = config.age.secrets."my-secret".sopsRef;
+                '';
+              };
+            };
+          }
+        )
+      );
+    };
+
+    # Add SOPS-specific top-level option
+    sops = mkOption {
+      type = types.submodule {
+        options = {
+          configFile = mkOption {
+            type = types.path;
+            default = ./.sops.yaml;
+            description = ''
+              Path to the .sops.yaml configuration file.
+              This file defines the age/pgp keys used for SOPS encryption.
+            '';
+          };
+
+          outputDir = mkOption {
+            type = types.path;
+            description = ''
+              The directory where SOPS encrypted files will be written.
+              Must be constructed using path concatenation from your flake root.
+
+              Example: ./. + "/.secrets/env/production"
+            '';
+          };
+        };
+      };
+      description = ''
+        SOPS configuration for this nixidy environment.
+      '';
+    };
+  };
+}

@@ -3,11 +3,15 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    agenix-rekey.url = "path:/home/sini/Documents/repos/sini/agenix-rekey";  # Local for testing
-    agenix-rekey.inputs.nixpkgs.follows = "nixpkgs";
-    agenix-rekey-to-sops.url = "path:../..";
-    agenix-rekey-to-sops.inputs.nixpkgs.follows = "nixpkgs";
-    agenix-rekey-to-sops.inputs.agenix-rekey.follows = "agenix-rekey";
+    agenix-rekey = {
+      url = "github:sini/agenix-rekey";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    agenix-rekey-to-sops = {
+      url = "path:../.."; # Parent directory
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.agenix-rekey.follows = "agenix-rekey";
+    };
     nixidy.url = "github:arnarg/nixidy";
     nixidy.inputs.nixpkgs.follows = "nixpkgs";
   };

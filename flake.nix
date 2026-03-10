@@ -4,96 +4,141 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
+    devshell = {
+      url = "github:numtide/devshell";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
+    flake-parts = {
+      url = "github:hercules-ci/flake-parts";
+      inputs.nixpkgs-lib.follows = "nixpkgs";
+    };
+
     agenix-rekey = {
-      # url = "github:sini/agenix-rekey";
-      url = "path:/home/sini/Documents/repos/sini/agenix-rekey";
+      url = "github:sini/agenix-rekey";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 
   outputs =
-    {
-      self,
-      nixpkgs,
-      agenix-rekey,
-    }:
-    {
-      # Nixidy module with SOPS support
-      nixidyModules = {
-        default = import ./modules/nixidy.nix nixpkgs;
-        agenix-rekey-to-sops = self.nixidyModules.default;
-      };
+    inputs:
+    inputs.flake-parts.lib.mkFlake { inherit inputs; } {
+      imports = [
+        inputs.devshell.flakeModule
+      ];
 
-      # Generic module (works for terranix too)
-      sopsModules = {
-        default = self.nixidyModules.default;
-      };
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "x86_64-darwin"
+        "aarch64-darwin"
+      ];
 
-      # Helper to configure agenix-rekey with sops-rekey app
-      configure =
+      flake =
         {
-          userFlake,
-          extraConfigurations ? { },
-          nixosConfigurations ? { },
-          darwinConfigurations ? { },
-          homeConfigurations ? { },
-          collectHomeManagerConfigurations ? true,
-          nodes ? { },
-          pkgs ? nixpkgs,
-          agePackage ? (p: p.rage),
-          systems ? [
-            "x86_64-linux"
-            "aarch64-linux"
-            "x86_64-darwin"
-            "aarch64-darwin"
-          ],
+          config,
+          lib,
+          ...
         }:
-        let
-          # Get base agenix-rekey apps
-          baseApps = agenix-rekey.configure {
-            inherit
-              userFlake
-              extraConfigurations
-              nixosConfigurations
-              darwinConfigurations
-              homeConfigurations
-              collectHomeManagerConfigurations
-              nodes
-              pkgs
-              agePackage
-              systems
-              ;
+        {
+          # Module that extends agenix-rekey with SOPS output support
+          nixidyModules = {
+            default = import ./modules/sops.nix {
+              agenix-rekey = inputs.agenix-rekey;
+              nixpkgs = inputs.nixpkgs;
+            };
+            agenix-rekey-to-sops = config.nixidyModules.default;
           };
-        in
-        nixpkgs.lib.genAttrs systems (
-          system:
-          let
-            pkgs' =
-              if builtins.isAttrs pkgs then
-                pkgs.${system} or (import nixpkgs { inherit system; })
-              else
-                import nixpkgs { inherit system; };
-          in
-          baseApps.${system}
-          // {
-            # Add sops-rekey app
-            sops-rekey = import ./apps/sops-rekey.nix {
-              nodes = import (agenix-rekey + "/nix/select-nodes.nix") {
+
+          # Generic module alias (works for nixidy, terranix, or any extraConfiguration)
+          sopsModules = {
+            default = config.nixidyModules.default;
+          };
+
+          # Helper to configure agenix-rekey with sops-rekey app
+          configure =
+            {
+              userFlake,
+              extraConfigurations ? { },
+              nixosConfigurations ? { },
+              darwinConfigurations ? { },
+              homeConfigurations ? { },
+              collectHomeManagerConfigurations ? true,
+              nodes ? { },
+              pkgs ? inputs.nixpkgs,
+              agePackage ? (p: p.rage),
+              systems ? [
+                "x86_64-linux"
+                "aarch64-linux"
+                "x86_64-darwin"
+                "aarch64-darwin"
+              ],
+            }:
+            let
+              # Get base agenix-rekey apps
+              baseApps = inputs.agenix-rekey.configure {
                 inherit
-                  nodes
+                  userFlake
+                  extraConfigurations
                   nixosConfigurations
                   darwinConfigurations
                   homeConfigurations
-                  extraConfigurations
                   collectHomeManagerConfigurations
+                  nodes
+                  pkgs
+                  agePackage
+                  systems
                   ;
-                inherit (pkgs') lib;
               };
-              inherit userFlake;
-              agePackage = agePackage pkgs';
-              pkgs = pkgs';
-            };
-          }
-        );
+            in
+            lib.genAttrs systems (
+              system:
+              let
+                pkgs' =
+                  if builtins.isAttrs pkgs then
+                    pkgs.${system} or (import inputs.nixpkgs { inherit system; })
+                  else
+                    import inputs.nixpkgs { inherit system; };
+              in
+              baseApps.${system}
+              // {
+                # Add sops-rekey app
+                sops-rekey = import ./apps/sops-rekey.nix {
+                  nodes = import (inputs.agenix-rekey + "/nix/select-nodes.nix") {
+                    inherit
+                      nodes
+                      nixosConfigurations
+                      darwinConfigurations
+                      homeConfigurations
+                      extraConfigurations
+                      collectHomeManagerConfigurations
+                      ;
+                    inherit (pkgs') lib;
+                  };
+                  inherit userFlake;
+                  agePackage = agePackage pkgs';
+                  pkgs = pkgs';
+                };
+              }
+            );
+        };
+
+      perSystem =
+        {
+          config,
+          pkgs,
+          ...
+        }:
+        {
+          devshells.default = {
+            packages = with pkgs; [
+              rage
+              sops
+              age
+              jq
+              yq-go
+            ];
+          };
+        };
     };
 }
