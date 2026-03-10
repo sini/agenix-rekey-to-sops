@@ -77,6 +77,10 @@ let
       # Get all rekey files for mtime comparison
       rekeyFiles = builtins.map (s: relativeToFlake s.rekeyFile) secrets;
 
+      # Get expected keys for comparison
+      expectedKeys = builtins.sort builtins.lessThan (builtins.map (s: s.sopsOutput.key) secrets);
+      expectedKeysJson = builtins.toJSON expectedKeys;
+
       # Generate YAML entry for a secret
       generateYamlEntry =
         secret:
@@ -101,24 +105,42 @@ let
       needs_regeneration=false
 
       if [[ -f ${escapeShellArg outputPath} ]]; then
-        # Check modification times first
-        newest_input=0
-        ${concatMapStrings (f: ''
-          if [[ -f ${escapeShellArg f} ]]; then
-            input_mtime=$(stat -c %Y ${escapeShellArg f} 2>/dev/null || stat -f %m ${escapeShellArg f} 2>/dev/null)
-            if (( input_mtime > newest_input )); then
-              newest_input=$input_mtime
-            fi
-          fi
-        '') rekeyFiles}
+        # Check if key set matches first
+        existing_keys=$(${pkgs.sops}/bin/sops -d ${escapeShellArg outputPath} 2>/dev/null | ${pkgs.yq-go}/bin/yq eval 'keys | sort | @json' - 2>/dev/null || echo "[]")
+        expected_keys=${escapeShellArg expectedKeysJson}
 
-        output_mtime=$(stat -c %Y ${escapeShellArg outputPath} 2>/dev/null || stat -f %m ${escapeShellArg outputPath} 2>/dev/null)
-
-        if (( newest_input > output_mtime )); then
-          echo "[1;33m      Inputs newer than output, regenerating[m"
+        if [[ "$existing_keys" != "$expected_keys" ]]; then
+          echo "[1;33m      Key set changed (expected: $expected_keys, got: $existing_keys), regenerating[m"
           needs_regeneration=true
         else
-          # All inputs older than output, compare plaintext content
+          # Keys match, check if all input files exist
+          missing_inputs=false
+          ${concatMapStrings (f: ''
+            if [[ ! -f ${escapeShellArg f} ]]; then
+              echo "[1;33m      Input file missing: ${escapeShellArg f}, regenerating[m"
+              missing_inputs=true
+            fi
+          '') rekeyFiles}
+
+          if [[ "$missing_inputs" == true ]]; then
+            needs_regeneration=true
+          else
+            # All inputs exist, check modification times
+            newest_input=0
+            ${concatMapStrings (f: ''
+              input_mtime=$(stat -c %Y ${escapeShellArg f} 2>/dev/null || stat -f %m ${escapeShellArg f} 2>/dev/null)
+              if (( input_mtime > newest_input )); then
+                newest_input=$input_mtime
+              fi
+            '') rekeyFiles}
+
+            output_mtime=$(stat -c %Y ${escapeShellArg outputPath} 2>/dev/null || stat -f %m ${escapeShellArg outputPath} 2>/dev/null)
+
+            if (( newest_input > output_mtime )); then
+              echo "[1;33m      Inputs newer than output, regenerating[m"
+              needs_regeneration=true
+            else
+              # All inputs older than output, compare plaintext content
           yaml_tmp=$(${pkgs.coreutils}/bin/mktemp)
           trap "rm -f $yaml_tmp" EXIT
 
@@ -136,13 +158,32 @@ let
             needs_regeneration=true
           fi
 
-          rm -f "$yaml_tmp"
+              rm -f "$yaml_tmp"
+            fi
+          fi
         fi
       else
         needs_regeneration=true
       fi
 
       if [[ "$skip_generation" == false && "$needs_regeneration" == true ]]; then
+        # Verify all input files exist before generating
+        missing_files=()
+        ${concatMapStrings (f: ''
+          if [[ ! -f ${escapeShellArg f} ]]; then
+            missing_files+=("${escapeShellArg f}")
+          fi
+        '') rekeyFiles}
+
+        if [[ ''${#missing_files[@]} -gt 0 ]]; then
+          echo "[1;31m      Error: Cannot generate SOPS file - missing input files:[m" >&2
+          for file in "''${missing_files[@]}"; do
+            echo "[1;31m        $file[m" >&2
+          done
+          echo "[1;33m      Run 'agenix generate' to create missing secrets[m" >&2
+          exit 1
+        fi
+
         # Generate new file
         yaml_tmp=$(${pkgs.coreutils}/bin/mktemp)
         trap "rm -f $yaml_tmp" EXIT
@@ -188,15 +229,20 @@ let
       needs_regeneration=false
 
       if [[ -f ${escapeShellArg outputPath} ]]; then
-        # Check modification time first
-        input_mtime=$(stat -c %Y ${escapeShellArg rekeyFileRelative} 2>/dev/null || stat -f %m ${escapeShellArg rekeyFileRelative} 2>/dev/null)
-        output_mtime=$(stat -c %Y ${escapeShellArg outputPath} 2>/dev/null || stat -f %m ${escapeShellArg outputPath} 2>/dev/null)
-
-        if (( input_mtime > output_mtime )); then
-          echo "[1;33m      Input newer than output, regenerating[m"
+        # Check if input file exists
+        if [[ ! -f ${escapeShellArg rekeyFileRelative} ]]; then
+          echo "[1;33m      Input file missing: ${escapeShellArg rekeyFileRelative}, regenerating[m"
           needs_regeneration=true
         else
-          # Input older than output, compare plaintext content
+          # Check modification time
+          input_mtime=$(stat -c %Y ${escapeShellArg rekeyFileRelative} 2>/dev/null || stat -f %m ${escapeShellArg rekeyFileRelative} 2>/dev/null)
+          output_mtime=$(stat -c %Y ${escapeShellArg outputPath} 2>/dev/null || stat -f %m ${escapeShellArg outputPath} 2>/dev/null)
+
+          if (( input_mtime > output_mtime )); then
+            echo "[1;33m      Input newer than output, regenerating[m"
+            needs_regeneration=true
+          else
+            # Input older than output, compare plaintext content
           binary_tmp=$(${pkgs.coreutils}/bin/mktemp)
           trap "rm -f $binary_tmp" EXIT
 
@@ -215,13 +261,21 @@ let
             needs_regeneration=true
           fi
 
-          rm -f "$binary_tmp"
+            rm -f "$binary_tmp"
+          fi
         fi
       else
         needs_regeneration=true
       fi
 
       if [[ "$skip_generation" == false && "$needs_regeneration" == true ]]; then
+        # Verify input file exists before generating
+        if [[ ! -f ${escapeShellArg rekeyFileRelative} ]]; then
+          echo "[1;31m      Error: Cannot generate SOPS file - missing input file: ${escapeShellArg rekeyFileRelative}[m" >&2
+          echo "[1;33m      Run 'agenix generate' to create missing secrets[m" >&2
+          exit 1
+        fi
+
         # Generate new file
         binary_tmp=$(${pkgs.coreutils}/bin/mktemp)
         trap "rm -f $binary_tmp" EXIT
@@ -298,6 +352,7 @@ let
       git
       jq
       sops
+      yq-go
     ]
   );
 
