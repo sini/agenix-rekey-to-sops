@@ -74,6 +74,9 @@ let
       relativeOutputDir = relativeToFlake outputDir;
       outputPath = "${relativeOutputDir}/${fileName}.enc.yaml";
 
+      # Get all rekey files for mtime comparison
+      rekeyFiles = builtins.map (s: relativeToFlake s.rekeyFile) secrets;
+
       # Generate YAML entry for a secret
       generateYamlEntry =
         secret:
@@ -93,26 +96,74 @@ let
     ''
       echo "[1;32m  Generating[m [90mSOPS file [33m${hostName}[90m:[34m${fileName}.enc.yaml[m"
 
-      # Create temp YAML file
-      yaml_tmp=$(${pkgs.coreutils}/bin/mktemp)
-      trap "rm -f $yaml_tmp" EXIT
+      # Check if we can skip generation
+      skip_generation=false
+      needs_regeneration=false
 
-      ${concatMapStrings generateYamlEntry secrets}
+      if [[ -f ${escapeShellArg outputPath} ]]; then
+        # Check modification times first
+        newest_input=0
+        ${concatMapStrings (f: ''
+          if [[ -f ${escapeShellArg f} ]]; then
+            input_mtime=$(stat -c %Y ${escapeShellArg f} 2>/dev/null || stat -f %m ${escapeShellArg f} 2>/dev/null)
+            if (( input_mtime > newest_input )); then
+              newest_input=$input_mtime
+            fi
+          fi
+        '') rekeyFiles}
 
-      # Encrypt with SOPS (use --filename-override for creation rule matching)
-      mkdir -p ${escapeShellArg relativeOutputDir}
-      if ${pkgs.sops}/bin/sops -e \
-        --config ${escapeShellArg sopsConfig} \
-        --filename-override ${escapeShellArg outputPath} \
-        "$yaml_tmp" > ${escapeShellArg outputPath}; then
-        echo "[1;32m      Created[m [34m${outputPath}[m"
+        output_mtime=$(stat -c %Y ${escapeShellArg outputPath} 2>/dev/null || stat -f %m ${escapeShellArg outputPath} 2>/dev/null)
+
+        if (( newest_input > output_mtime )); then
+          echo "[1;33m      Inputs newer than output, regenerating[m"
+          needs_regeneration=true
+        else
+          # All inputs older than output, compare plaintext content
+          yaml_tmp=$(${pkgs.coreutils}/bin/mktemp)
+          trap "rm -f $yaml_tmp" EXIT
+
+          ${concatMapStrings generateYamlEntry secrets}
+
+          # Compare plaintext YAML with decrypted existing file
+          existing_decrypted=$(${pkgs.sops}/bin/sops -d ${escapeShellArg outputPath} 2>/dev/null | sort)
+          new_plaintext=$(sort "$yaml_tmp")
+
+          if [[ "$existing_decrypted" == "$new_plaintext" ]]; then
+            echo "[1;90m      Unchanged, skipping[m"
+            skip_generation=true
+          else
+            echo "[1;33m      Content changed, regenerating[m"
+            needs_regeneration=true
+          fi
+
+          rm -f "$yaml_tmp"
+        fi
       else
-        echo "[1;31m      Failed to encrypt ${outputPath}[m" >&2
-        rm -f "$yaml_tmp"
-        exit 1
+        needs_regeneration=true
       fi
 
-      rm -f "$yaml_tmp"
+      if [[ "$skip_generation" == false && "$needs_regeneration" == true ]]; then
+        # Generate new file
+        yaml_tmp=$(${pkgs.coreutils}/bin/mktemp)
+        trap "rm -f $yaml_tmp" EXIT
+
+        ${concatMapStrings generateYamlEntry secrets}
+
+        # Encrypt with SOPS (use --filename-override for creation rule matching)
+        mkdir -p ${escapeShellArg relativeOutputDir}
+        if ${pkgs.sops}/bin/sops -e \
+          --config ${escapeShellArg sopsConfig} \
+          --filename-override ${escapeShellArg outputPath} \
+          "$yaml_tmp" > ${escapeShellArg outputPath}; then
+          echo "[1;32m      Created[m [34m${outputPath}[m"
+        else
+          echo "[1;31m      Failed to encrypt ${outputPath}[m" >&2
+          rm -f "$yaml_tmp"
+          exit 1
+        fi
+
+        rm -f "$yaml_tmp"
+      fi
 
       # Track for git add
       SOPS_FILES+=("${outputPath}")
@@ -132,27 +183,67 @@ let
     ''
       echo "[1;32m  Generating[m [90mbinary SOPS file [34m${secret.name}[m"
 
-      # Create temp file for decrypted content
-      binary_tmp=$(${pkgs.coreutils}/bin/mktemp)
-      trap "rm -f $binary_tmp" EXIT
+      # Check if we can skip generation
+      skip_generation=false
+      needs_regeneration=false
 
-      # Decrypt to temp file
-      ${ageMasterDecrypt} ${escapeShellArg rekeyFileRelative} > "$binary_tmp"
+      if [[ -f ${escapeShellArg outputPath} ]]; then
+        # Check modification time first
+        input_mtime=$(stat -c %Y ${escapeShellArg rekeyFileRelative} 2>/dev/null || stat -f %m ${escapeShellArg rekeyFileRelative} 2>/dev/null)
+        output_mtime=$(stat -c %Y ${escapeShellArg outputPath} 2>/dev/null || stat -f %m ${escapeShellArg outputPath} 2>/dev/null)
 
-      # Encrypt entire file with SOPS (use --filename-override for creation rule matching)
-      mkdir -p ${escapeShellArg relativeOutputDir}
-      if ${pkgs.sops}/bin/sops -e \
-        --config ${escapeShellArg sopsConfig} \
-        --filename-override ${escapeShellArg outputPath} \
-        "$binary_tmp" > ${escapeShellArg outputPath}; then
-        echo "[1;32m      Created[m [34m${outputPath}[m"
+        if (( input_mtime > output_mtime )); then
+          echo "[1;33m      Input newer than output, regenerating[m"
+          needs_regeneration=true
+        else
+          # Input older than output, compare plaintext content
+          binary_tmp=$(${pkgs.coreutils}/bin/mktemp)
+          trap "rm -f $binary_tmp" EXIT
+
+          # Decrypt source file
+          ${ageMasterDecrypt} ${escapeShellArg rekeyFileRelative} > "$binary_tmp"
+
+          # Compare plaintext with decrypted existing SOPS file
+          existing_decrypted=$(${pkgs.sops}/bin/sops -d ${escapeShellArg outputPath} 2>/dev/null)
+          new_plaintext=$(cat "$binary_tmp")
+
+          if [[ "$existing_decrypted" == "$new_plaintext" ]]; then
+            echo "[1;90m      Unchanged, skipping[m"
+            skip_generation=true
+          else
+            echo "[1;33m      Content changed, regenerating[m"
+            needs_regeneration=true
+          fi
+
+          rm -f "$binary_tmp"
+        fi
       else
-        echo "[1;31m      Failed to encrypt ${outputPath}[m" >&2
-        rm -f "$binary_tmp"
-        exit 1
+        needs_regeneration=true
       fi
 
-      rm -f "$binary_tmp"
+      if [[ "$skip_generation" == false && "$needs_regeneration" == true ]]; then
+        # Generate new file
+        binary_tmp=$(${pkgs.coreutils}/bin/mktemp)
+        trap "rm -f $binary_tmp" EXIT
+
+        # Decrypt to temp file
+        ${ageMasterDecrypt} ${escapeShellArg rekeyFileRelative} > "$binary_tmp"
+
+        # Encrypt entire file with SOPS (use --filename-override for creation rule matching)
+        mkdir -p ${escapeShellArg relativeOutputDir}
+        if ${pkgs.sops}/bin/sops -e \
+          --config ${escapeShellArg sopsConfig} \
+          --filename-override ${escapeShellArg outputPath} \
+          "$binary_tmp" > ${escapeShellArg outputPath}; then
+          echo "[1;32m      Created[m [34m${outputPath}[m"
+        else
+          echo "[1;31m      Failed to encrypt ${outputPath}[m" >&2
+          rm -f "$binary_tmp"
+          exit 1
+        fi
+
+        rm -f "$binary_tmp"
+      fi
 
       # Track for git add
       SOPS_FILES+=("${outputPath}")
@@ -205,6 +296,7 @@ let
     [
       coreutils
       git
+      jq
       sops
     ]
   );
