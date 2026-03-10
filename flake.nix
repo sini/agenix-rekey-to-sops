@@ -41,6 +41,9 @@
           ...
         }:
         {
+          # Flake-parts module that extends agenix-rekey with SOPS support
+          flakeModule = import ./flake-module.nix;
+
           # Module that extends agenix-rekey with SOPS output support
           sopsModules = {
             default = import ./modules/sops.nix {
