@@ -3,5 +3,5 @@ result-*
 *.lock
 .direnv/
 .secrets/
-secrets/*.age
+secrets/
 !secrets/.gitkeep

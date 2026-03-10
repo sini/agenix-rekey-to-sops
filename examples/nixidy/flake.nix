@@ -31,11 +31,13 @@
     {
       # Define nixidy environments with agenix-rekey integration
       # Note: We use extraConfigurations to support custom configs
-      extraConfigurations = {
-        production = nixidy.lib.mkEnv {
-          inherit pkgs;
-          modules = [
-            agenix-rekey-to-sops.nixidyModules.default
+      # nix --extra-experimental-features nix-command build .#nixidyEnvs.x86_64-linux.production.environmentPackage
+      nixidyEnvs.${system}.production = nixidy.lib.mkEnv {
+        inherit pkgs;
+        modules = [
+          agenix-rekey-to-sops.nixidyModules.default
+          (
+            { config, ... }:
             {
               age = {
                 # SOPS configuration
@@ -46,6 +48,8 @@
 
                 # Master identity for decrypting source secrets
                 rekey = {
+                  recipientIdentifier = "production";
+                  storageMode = "local";
                   masterIdentities = [ /home/sini/Documents/repos/sini/nix-config/.secrets/pub/master.pub ];
                   agePlugins = [ pkgs.age-plugin-yubikey ];
                 };
@@ -70,17 +74,99 @@
                       key = "grafana";
                     };
                   };
+
+                  # Demo application secrets (grouped into demo-app.enc.yaml)
+                  # These demonstrate the full workflow:
+                  # 1. Define secrets with rekeyFile (age-encrypted source)
+                  # 2. Add sopsOutput config (which SOPS file to generate)
+                  # 3. Use secret.sopsRef in Kubernetes manifests
+                  # 4. Deploy with vals to resolve ref+sops:// URIs
+                  demo-app-api-key = {
+                    rekeyFile = ./secrets/demo-app-api-key.age;
+                    generator.script = "alnum";
+                    sopsOutput = {
+                      file = "demo-app";
+                      key = "api-key";
+                      format = "str";
+                    };
+                  };
+
+                  demo-app-db-password = {
+                    rekeyFile = ./secrets/demo-app-db-password.age;
+                    generator.script = "alnum";
+                    sopsOutput = {
+                      file = "demo-app";
+                      key = "db-password";
+                      format = "str";
+                    };
+                  };
+                };
+              };
+
+              # Nixidy configuration for demo application
+              nixidy.target.repository = "https://github.com/example/repo.git";
+              nixidy.target.branch = "main";
+              nixidy.target.rootPath = "./examples/nixidy/manifests/production/";
+
+              applications.demo-app = {
+                namespace = "demo-app";
+                createNamespace = true;
+
+                resources = {
+                  # Secret with vals references
+                  secrets.demo-app-secrets = {
+                    metadata.name = "demo-app-secrets";
+                    stringData = {
+                      # These will be resolved by vals at deployment time
+                      api-key = config.age.secrets.demo-app-api-key.sopsRef;
+                      db-password = config.age.secrets.demo-app-db-password.sopsRef;
+                    };
+                  };
+
+                  # Example deployment using the secrets
+                  deployments.demo-app = {
+                    metadata.name = "demo-app";
+                    spec = {
+                      replicas = 2;
+                      selector.matchLabels.app = "demo-app";
+                      template = {
+                        metadata.labels.app = "demo-app";
+                        spec.containers = [
+                          {
+                            name = "app";
+                            image = "nginx:latest";
+                            env = [
+                              {
+                                name = "API_KEY";
+                                valueFrom.secretKeyRef = {
+                                  name = "demo-app-secrets";
+                                  key = "api-key";
+                                };
+                              }
+                              {
+                                name = "DB_PASSWORD";
+                                valueFrom.secretKeyRef = {
+                                  name = "demo-app-secrets";
+                                  key = "db-password";
+                                };
+                              }
+                            ];
+                          }
+                        ];
+                      };
+                    };
+                  };
                 };
               };
             }
-          ];
-        };
+          )
+        ];
       };
 
       # Configure agenix-rekey with SOPS extension
       agenix-rekey = agenix-rekey-to-sops.configure {
         userFlake = self;
-        inherit (self) extraConfigurations;
+        extraConfigurations = self.nixidyEnvs;
       };
     };
 }
