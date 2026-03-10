@@ -43,14 +43,14 @@
                 # SOPS configuration
                 sops = {
                   configFile = ./.sops.yaml;
-                  outputDir = ./. + "/.secrets/prod";
+                  outputDir = ./. + "/.secrets/prod"; # Only used for local mode
                 };
 
                 # Master identity for decrypting source secrets
                 rekey = {
                   recipientIdentifier = "production";
-                  storageMode = "local";
-                  masterIdentities = [ /home/sini/Documents/repos/sini/nix-config/.secrets/pub/master.pub ];
+                  storageMode = "local"; # or "derivation"
+                  masterIdentities = [ ./master.pub ];
                   agePlugins = [ pkgs.age-plugin-yubikey ];
                 };
 
@@ -166,7 +166,10 @@
       # Configure agenix-rekey with SOPS extension
       agenix-rekey = agenix-rekey-to-sops.configure {
         userFlake = self;
-        extraConfigurations = self.nixidyEnvs;
+        # Flatten the nested nixidyEnvs structure for all systems
+        extraConfigurations = builtins.foldl' (acc: system: acc // self.nixidyEnvs.${system}) { } [
+          system
+        ];
       };
     };
 }

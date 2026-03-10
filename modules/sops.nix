@@ -17,6 +17,17 @@ let
   # agenix-rekey's module expects nixpkgs as first arg, then returns the module
   agenixRekeyModule = import (agenix-rekey + "/modules/agenix-rekey.nix") nixpkgs;
 
+  # Build SOPS secrets as a derivation (when storageMode = "derivation")
+  sopsSecrets =
+    if cfg.sops.storageMode == "derivation" then
+      import ../nix/sops-derivation.nix {
+        inherit pkgs;
+        hostConfig = config;
+        agePackage = pkgs.rage;
+      }
+    else
+      null;
+
 in
 {
   # Import agenix-rekey's module to get all standard options
@@ -40,8 +51,30 @@ in
     };
   };
 
-  # Provide default config for agenix-rekey's deprecated rekey.secrets
-  config.rekey.secrets = lib.mkDefault { };
+  # Provide default config for agenix-rekey compatibility
+  config = {
+    # Deprecated option
+    rekey.secrets = lib.mkDefault { };
+
+    # For derivation mode to work, we need to provide a hostPubkey
+    # even though we don't actually deploy to a host (we just generate SOPS files)
+    # This allows the rekeyed secrets derivation to be built
+    # Use the same dummy key that agenix-rekey uses for placeholders
+    age.rekey.hostPubkey = lib.mkDefault (
+      if config.age.rekey.storageMode == "derivation" then
+        "age1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqs3290gq"
+      else
+        null
+    );
+
+    # Assertions for SOPS configuration
+    assertions = [
+      {
+        assertion = config.age.rekey.storageMode == "local" -> config.age.sops.outputDir != null;
+        message = "age.sops.outputDir must be set when storageMode = \"local\"";
+      }
+    ];
+  };
 
   # Extend age.secrets submodule with SOPS-specific options
   # The module system will automatically merge these with agenix-rekey's existing options
@@ -114,21 +147,39 @@ in
                     throw "age.secrets.${name}.sopsRef: sopsOutput must be defined to compute sopsRef"
                   else
                     let
-                      # Convert outputDir to string without checking existence
-                      outputDirStr = builtins.unsafeDiscardStringContext (toString cfg.sops.outputDir);
+                      # For derivation mode, use the store path
+                      # For local mode, use outputDir
+                      basePath =
+                        if cfg.rekey.storageMode == "derivation" then
+                          if sopsSecrets == null then
+                            throw "age.secrets.${name}.sopsRef: SOPS derivation not built"
+                          else
+                            toString sopsSecrets
+                        else if cfg.sops.outputDir != null then
+                          builtins.unsafeDiscardStringContext (toString cfg.sops.outputDir)
+                        else
+                          throw "age.secrets.${name}.sopsRef: outputDir must be set when storageMode = \"local\"";
+
+                      fileName =
+                        if config.sopsOutput.format == "binary" then
+                          "${config.sopsOutput.file}.enc"
+                        else
+                          "${config.sopsOutput.file}.enc.yaml";
+
+                      fragment = if config.sopsOutput.format == "binary" then "" else "#${config.sopsOutput.key}";
                     in
-                    if config.sopsOutput.format == "binary" then
-                      "ref+sops://${outputDirStr}/${config.sopsOutput.file}.enc"
-                    else
-                      "ref+sops://${outputDirStr}/${config.sopsOutput.file}.enc.yaml#${config.sopsOutput.key}";
+                    "ref+sops://${basePath}/${fileName}${fragment}";
                 defaultText = literalExpression ''
-                  if format == "binary"
-                  then "ref+sops://''${outputDir}/''${file}.enc"
+                  if storageMode == "derivation"
+                  then "ref+sops://''${derivation}/''${file}.enc.yaml#''${key}"
                   else "ref+sops://''${outputDir}/''${file}.enc.yaml#''${key}"
                 '';
                 description = ''
                   The vals URI for referencing this secret in nixidy manifests.
                   This is a computed read-only attribute based on sopsOutput configuration.
+
+                  In derivation mode, points to /nix/store path.
+                  In local mode, points to outputDir path.
 
                   Use this in your Kubernetes Secret definitions like:
                     stringData.password = config.age.secrets."my-secret".sopsRef;
@@ -154,11 +205,13 @@ in
           };
 
           outputDir = mkOption {
-            type = types.path;
+            type = types.nullOr types.path;
+            default = null;
             description = ''
               The directory where SOPS encrypted files will be written.
               Must be constructed using path concatenation from your flake root.
 
+              Only used when storageMode = "local".
               Example: ./. + "/.secrets/env/production"
             '';
           };
