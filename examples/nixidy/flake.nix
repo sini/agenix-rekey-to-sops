@@ -35,7 +35,7 @@
       nixidyEnvs.${system}.production = nixidy.lib.mkEnv {
         inherit pkgs;
         modules = [
-          agenix-rekey-to-sops.nixidyModules.default
+          agenix-rekey-to-sops.sopsModules.default
           (
             { config, ... }:
             {

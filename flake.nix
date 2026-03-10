@@ -42,17 +42,12 @@
         }:
         {
           # Module that extends agenix-rekey with SOPS output support
-          nixidyModules = {
+          sopsModules = {
             default = import ./modules/sops.nix {
               agenix-rekey = inputs.agenix-rekey;
               nixpkgs = inputs.nixpkgs;
             };
             agenix-rekey-to-sops = config.nixidyModules.default;
-          };
-
-          # Generic module alias (works for nixidy, terranix, or any extraConfiguration)
-          sopsModules = {
-            default = config.nixidyModules.default;
           };
 
           # Helper to configure agenix-rekey with sops-rekey app
