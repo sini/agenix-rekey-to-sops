@@ -56,16 +56,11 @@ in
     # Deprecated option
     rekey.secrets = lib.mkDefault { };
 
-    # For derivation mode to work, we need to provide a hostPubkey
+    # For SOPS configurations (both local and derivation modes), we need to provide a hostPubkey
     # even though we don't actually deploy to a host (we just generate SOPS files)
-    # This allows the rekeyed secrets derivation to be built
-    # Use the same dummy key that agenix-rekey uses for placeholders
-    age.rekey.hostPubkey = lib.mkDefault (
-      if config.age.rekey.storageMode == "derivation" then
-        "age1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqs3290gq"
-      else
-        null
-    );
+    # This is required by agenix-rekey but not used for SOPS output
+    # Use a dummy age key - this is only needed to satisfy agenix-rekey's module requirements
+    age.rekey.hostPubkey = lib.mkDefault "age1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqs3290gq";
 
     # Assertions for SOPS configuration
     assertions = [
