@@ -5,6 +5,7 @@
   allApps,
   coreutils,
   agenix-rekey,
+  sopsRekeyApp ? null,  # Optional: the sops-rekey app derivation
 }:
 writeShellScriptBin "agenix" ''
   set -euo pipefail
@@ -119,7 +120,19 @@ writeShellScriptBin "agenix" ''
     show_help
     exit 1
   fi
+
   echo "Collecting information about hosts. This may take a while..." >&2
+  ${
+    if sopsRekeyApp != null then
+      ''
+        # Special handling for sops-rekey - use pre-built app
+        if [[ "$APP" == "sops-rekey" ]]; then
+          exec ${sopsRekeyApp}/bin/agenix-sops-rekey "''${PASS_THRU_ARGS[@]}"
+        fi
+      ''
+    else
+      ""
+  }
   exec nix run $SHOW_TRACE_ARG \
     ."$FLAKE_PARAMS"#agenix-rekey.${lib.escapeShellArg stdenv.hostPlatform.system}."$APP" \
       -- "''${PASS_THRU_ARGS[@]}"

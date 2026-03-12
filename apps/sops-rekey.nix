@@ -41,7 +41,7 @@ let
     )
   );
 
-  ageProgram = getExe agePackage;
+  ageProgram = getExe (agePackage pkgs);
   envPath = ''PATH="$PATH"${concatMapStrings (x: ":${escapeShellArg x}/bin") mergedAgePlugins}'';
 
   toIdentityArgs = identities: concatStringsSep " " (builtins.map (x: "-i ${x.identity}") identities);
