@@ -41,7 +41,7 @@ let
     )
   );
 
-  ageProgram = getExe (agePackage pkgs);
+  ageProgram = getExe (if builtins.isFunction agePackage then agePackage pkgs else agePackage);
   envPath = ''PATH="$PATH"${concatMapStrings (x: ":${escapeShellArg x}/bin") mergedAgePlugins}'';
 
   toIdentityArgs = identities: concatStringsSep " " (builtins.map (x: "-i ${x.identity}") identities);
@@ -74,7 +74,7 @@ let
       relativeOutputDir = relativeToFlake outputDir;
       outputPath = "${relativeOutputDir}/${fileName}.enc.yaml";
 
-      # Get all rekey files for mtime comparison
+      # Get all rekey files for validation
       rekeyFiles = builtins.map (s: relativeToFlake s.rekeyFile) secrets;
 
       # Get expected keys for comparison
@@ -125,41 +125,25 @@ let
           if [[ "$missing_inputs" == true ]]; then
             needs_regeneration=true
           else
-            # All inputs exist, check modification times
-            newest_input=0
-            ${concatMapStrings (f: ''
-              input_mtime=$(stat -c %Y ${escapeShellArg f} 2>/dev/null || stat -f %m ${escapeShellArg f} 2>/dev/null)
-              if (( input_mtime > newest_input )); then
-                newest_input=$input_mtime
-              fi
-            '') rekeyFiles}
+            # All inputs exist, compare plaintext content
+            yaml_tmp=$(${pkgs.coreutils}/bin/mktemp)
+            trap "rm -f $yaml_tmp" EXIT
 
-            output_mtime=$(stat -c %Y ${escapeShellArg outputPath} 2>/dev/null || stat -f %m ${escapeShellArg outputPath} 2>/dev/null)
+            ${concatMapStrings generateYamlEntry secrets}
 
-            if (( newest_input > output_mtime )); then
-              echo "[1;33m      Inputs newer than output, regenerating[m"
-              needs_regeneration=true
+            # Compare plaintext YAML with decrypted existing file
+            existing_decrypted=$(${pkgs.sops}/bin/sops -d ${escapeShellArg outputPath} 2>/dev/null | sort)
+            new_plaintext=$(sort "$yaml_tmp")
+
+            if [[ "$existing_decrypted" == "$new_plaintext" ]]; then
+              echo "[1;90m      Unchanged, skipping[m"
+              skip_generation=true
             else
-              # All inputs older than output, compare plaintext content
-          yaml_tmp=$(${pkgs.coreutils}/bin/mktemp)
-          trap "rm -f $yaml_tmp" EXIT
-
-          ${concatMapStrings generateYamlEntry secrets}
-
-          # Compare plaintext YAML with decrypted existing file
-          existing_decrypted=$(${pkgs.sops}/bin/sops -d ${escapeShellArg outputPath} 2>/dev/null | sort)
-          new_plaintext=$(sort "$yaml_tmp")
-
-          if [[ "$existing_decrypted" == "$new_plaintext" ]]; then
-            echo "[1;90m      Unchanged, skipping[m"
-            skip_generation=true
-          else
-            echo "[1;33m      Content changed, regenerating[m"
-            needs_regeneration=true
-          fi
-
-              rm -f "$yaml_tmp"
+              echo "[1;33m      Content changed, regenerating[m"
+              needs_regeneration=true
             fi
+
+            rm -f "$yaml_tmp"
           fi
         fi
       else
@@ -234,15 +218,7 @@ let
           echo "[1;33m      Input file missing: ${escapeShellArg rekeyFileRelative}, regenerating[m"
           needs_regeneration=true
         else
-          # Check modification time
-          input_mtime=$(stat -c %Y ${escapeShellArg rekeyFileRelative} 2>/dev/null || stat -f %m ${escapeShellArg rekeyFileRelative} 2>/dev/null)
-          output_mtime=$(stat -c %Y ${escapeShellArg outputPath} 2>/dev/null || stat -f %m ${escapeShellArg outputPath} 2>/dev/null)
-
-          if (( input_mtime > output_mtime )); then
-            echo "[1;33m      Input newer than output, regenerating[m"
-            needs_regeneration=true
-          else
-            # Input older than output, compare plaintext content
+          # Compare plaintext content
           binary_tmp=$(${pkgs.coreutils}/bin/mktemp)
           trap "rm -f $binary_tmp" EXIT
 
@@ -261,8 +237,7 @@ let
             needs_regeneration=true
           fi
 
-            rm -f "$binary_tmp"
-          fi
+          rm -f "$binary_tmp"
         fi
       else
         needs_regeneration=true

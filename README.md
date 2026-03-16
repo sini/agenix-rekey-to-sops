@@ -182,7 +182,6 @@ agenix sops-rekey --help    # Show all options
 **Optimization features:**
 - ✅ Skips files when content unchanged
 - ✅ Detects when secrets added/removed from groups
-- ✅ Compares modification times before decrypting
 - ✅ Clear error messages for missing input files
 
 ### `agenix rekey`
@@ -333,17 +332,7 @@ $ agenix sops-rekey
       Created ./.secrets/prod/oidc.enc.yaml
 ```
 
-### 2. Modification Time Check
-Skips if input files older than output:
-
-```bash
-$ agenix sops-rekey
-   Generating SOPS files for prod
-  Generating SOPS file prod:oidc.enc.yaml
-      Unchanged, skipping
-```
-
-### 3. Content Comparison
+### 2. Content Comparison
 Compares plaintext content before regenerating:
 
 ```bash
@@ -354,7 +343,16 @@ $ agenix sops-rekey
       Created ./.secrets/prod/database.enc.yaml
 ```
 
-### 4. Better Error Messages
+When content is unchanged:
+
+```bash
+$ agenix sops-rekey
+   Generating SOPS files for prod
+  Generating SOPS file prod:oidc.enc.yaml
+      Unchanged, skipping
+```
+
+### 3. Better Error Messages
 
 Clear errors for missing files:
 
