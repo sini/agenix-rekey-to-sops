@@ -81,7 +81,7 @@ let
       expectedKeys = builtins.sort builtins.lessThan (builtins.map (s: s.sopsOutput.key) secrets);
       expectedKeysJson = builtins.toJSON expectedKeys;
 
-      # Generate YAML entry for a secret
+      # Generate YAML entry for a secret (using pre-decrypted file)
       generateYamlEntry =
         secret:
         let
@@ -90,10 +90,17 @@ let
             if secret.sopsOutput.format == "base64" then " | ${pkgs.coreutils}/bin/base64 -w0" else "";
           # Convert rekeyFile to relative path
           rekeyFileRelative = relativeToFlake secret.rekeyFile;
+          # Escaped path for lookup
+          escapedPath = escapeShellArg rekeyFileRelative;
         in
         ''
-          # Decrypt and encode ${secret.name}
-          secret_value=$(${ageMasterDecrypt} ${escapeShellArg rekeyFileRelative}${encodeCmd})
+          # Get pre-decrypted value for ${secret.name}
+          if [[ -f "$DECRYPT_DIR/${escapedPath}" ]]; then
+            secret_value=$(cat "$DECRYPT_DIR/${escapedPath}"${encodeCmd})
+          else
+            echo "[1;31m      Error: Decrypted file missing for ${escapedPath}[m" >&2
+            exit 1
+          fi
           echo "${escapeShellArg secret.sopsOutput.key}: $secret_value" >> "$yaml_tmp"
         '';
     in
@@ -116,8 +123,9 @@ let
           # Keys match, check if all input files exist
           missing_inputs=false
           ${concatMapStrings (f: ''
-            if [[ ! -f ${escapeShellArg f} ]]; then
-              echo "[1;33m      Input file missing: ${escapeShellArg f}, regenerating[m"
+            escapedPath=${escapeShellArg (escapeShellArg f)}
+            if [[ ! -f "$DECRYPT_DIR/$escapedPath" ]]; then
+              echo "[1;33m      Decrypted input missing: ${escapeShellArg f}, regenerating[m"
               missing_inputs=true
             fi
           '') rekeyFiles}
@@ -151,23 +159,6 @@ let
       fi
 
       if [[ "$skip_generation" == false && "$needs_regeneration" == true ]]; then
-        # Verify all input files exist before generating
-        missing_files=()
-        ${concatMapStrings (f: ''
-          if [[ ! -f ${escapeShellArg f} ]]; then
-            missing_files+=("${escapeShellArg f}")
-          fi
-        '') rekeyFiles}
-
-        if [[ ''${#missing_files[@]} -gt 0 ]]; then
-          echo "[1;31m      Error: Cannot generate SOPS file - missing input files:[m" >&2
-          for file in "''${missing_files[@]}"; do
-            echo "[1;31m        $file[m" >&2
-          done
-          echo "[1;33m      Run 'agenix generate' to create missing secrets[m" >&2
-          exit 1
-        fi
-
         # Generate new file
         yaml_tmp=$(${pkgs.coreutils}/bin/mktemp)
         trap "rm -f $yaml_tmp" EXIT
@@ -212,22 +203,17 @@ let
       skip_generation=false
       needs_regeneration=false
 
+      escapedPath=${escapeShellArg (escapeShellArg rekeyFileRelative)}
+
       if [[ -f ${escapeShellArg outputPath} ]]; then
-        # Check if input file exists
-        if [[ ! -f ${escapeShellArg rekeyFileRelative} ]]; then
-          echo "[1;33m      Input file missing: ${escapeShellArg rekeyFileRelative}, regenerating[m"
+        # Check if decrypted input exists
+        if [[ ! -f "$DECRYPT_DIR/$escapedPath" ]]; then
+          echo "[1;33m      Decrypted input missing: ${escapeShellArg rekeyFileRelative}, regenerating[m"
           needs_regeneration=true
         else
-          # Compare plaintext content
-          binary_tmp=$(${pkgs.coreutils}/bin/mktemp)
-          trap "rm -f $binary_tmp" EXIT
-
-          # Decrypt source file
-          ${ageMasterDecrypt} ${escapeShellArg rekeyFileRelative} > "$binary_tmp"
-
-          # Compare plaintext with decrypted existing SOPS file
+          # Compare plaintext content with pre-decrypted file
           existing_decrypted=$(${pkgs.sops}/bin/sops -d ${escapeShellArg outputPath} 2>/dev/null)
-          new_plaintext=$(cat "$binary_tmp")
+          new_plaintext=$(cat "$DECRYPT_DIR/$escapedPath")
 
           if [[ "$existing_decrypted" == "$new_plaintext" ]]; then
             echo "[1;90m      Unchanged, skipping[m"
@@ -236,42 +222,30 @@ let
             echo "[1;33m      Content changed, regenerating[m"
             needs_regeneration=true
           fi
-
-          rm -f "$binary_tmp"
         fi
       else
         needs_regeneration=true
       fi
 
       if [[ "$skip_generation" == false && "$needs_regeneration" == true ]]; then
-        # Verify input file exists before generating
-        if [[ ! -f ${escapeShellArg rekeyFileRelative} ]]; then
-          echo "[1;31m      Error: Cannot generate SOPS file - missing input file: ${escapeShellArg rekeyFileRelative}[m" >&2
+        # Verify decrypted input file exists
+        if [[ ! -f "$DECRYPT_DIR/$escapedPath" ]]; then
+          echo "[1;31m      Error: Cannot generate SOPS file - missing decrypted file: ${escapeShellArg rekeyFileRelative}[m" >&2
           echo "[1;33m      Run 'agenix generate' to create missing secrets[m" >&2
           exit 1
         fi
-
-        # Generate new file
-        binary_tmp=$(${pkgs.coreutils}/bin/mktemp)
-        trap "rm -f $binary_tmp" EXIT
-
-        # Decrypt to temp file
-        ${ageMasterDecrypt} ${escapeShellArg rekeyFileRelative} > "$binary_tmp"
 
         # Encrypt entire file with SOPS (use --filename-override for creation rule matching)
         mkdir -p ${escapeShellArg relativeOutputDir}
         if ${pkgs.sops}/bin/sops -e \
           --config ${escapeShellArg sopsConfig} \
           --filename-override ${escapeShellArg outputPath} \
-          "$binary_tmp" > ${escapeShellArg outputPath}; then
+          "$DECRYPT_DIR/$escapedPath" > ${escapeShellArg outputPath}; then
           echo "[1;32m      Created[m [34m${outputPath}[m"
         else
           echo "[1;31m      Failed to encrypt ${outputPath}[m" >&2
-          rm -f "$binary_tmp"
           exit 1
         fi
-
-        rm -f "$binary_tmp"
       fi
 
       # Track for git add
@@ -380,7 +354,51 @@ pkgs.writeShellScriptBin "agenix-sops-rekey" ''
         exit 0
       ''
     else
-      concatStringsSep "\n" (mapAttrsToList commandsForNixidyHost sopsNodes)
+      let
+        # Collect all unique age files that need decryption
+        allRekeyFiles = unique (
+          builtins.concatLists (
+            mapAttrsToList (
+              _hostName: hostCfg:
+              let
+                sopsSecrets = filterAttrs (
+                  _name: secret: secret ? sopsOutput && secret.rekeyFile != null && !secret.intermediary
+                ) hostCfg.config.age.secrets;
+              in
+              builtins.map (s: relativeToFlake s.rekeyFile) (builtins.attrValues sopsSecrets)
+            ) sopsNodes
+          )
+        );
+      in
+      ''
+        # Create temp directory for decrypted age files
+        DECRYPT_DIR=$(mktemp -d)
+        trap 'rm -rf "$DECRYPT_DIR"' EXIT
+
+        echo "[1;36m   Decrypting age inputs (YubiKey unlock for age plugin)...[m"
+
+        # Decrypt all age files upfront to minimize YubiKey unlocks
+        ${concatMapStrings (rekeyFile: ''
+          file_path=${escapeShellArg rekeyFile}
+          escaped_path=${escapeShellArg (escapeShellArg rekeyFile)}
+
+          # Create directory structure
+          mkdir -p "$(dirname "$DECRYPT_DIR/$escaped_path")"
+
+          # Decrypt file
+          if ${ageMasterDecrypt} "$file_path" > "$DECRYPT_DIR/$escaped_path" 2>/dev/null; then
+            echo "[1;90m      Decrypted: $file_path[m"
+          else
+            echo "[1;31m      Failed to decrypt: $file_path[m" >&2
+            exit 1
+          fi
+        '') allRekeyFiles}
+
+        echo "[1;32m   Decrypted ${builtins.toString (builtins.length allRekeyFiles)} age files[m"
+        echo ""
+
+        ${concatStringsSep "\n" (mapAttrsToList commandsForNixidyHost sopsNodes)}
+      ''
   }
 
   # Add to git if requested

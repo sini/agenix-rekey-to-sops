@@ -182,6 +182,7 @@ agenix sops-rekey --help    # Show all options
 **Optimization features:**
 - ✅ Skips files when content unchanged
 - ✅ Detects when secrets added/removed from groups
+- ✅ Batched decryption/encryption to minimize YubiKey unlocks
 - ✅ Clear error messages for missing input files
 
 ### `agenix rekey`
@@ -352,7 +353,34 @@ $ agenix sops-rekey
       Unchanged, skipping
 ```
 
-### 3. Better Error Messages
+### 3. Batched Decryption/Encryption (YubiKey Optimization)
+
+Minimizes YubiKey unlocks by batching operations:
+
+```bash
+$ agenix sops-rekey
+   Decrypting age inputs (YubiKey unlock for age plugin)...
+      Decrypted: ./secrets/demo-app-api-key.age
+      Decrypted: ./secrets/demo-app-db-password.age
+      Decrypted: ./secrets/grafana-oidc.age
+      Decrypted: ./secrets/hubble-ui-oidc.age
+   Decrypted 4 age files
+
+   Generating SOPS files for production
+  Generating SOPS file production:demo-app.enc.yaml
+      Created ./.secrets/prod/demo-app.enc.yaml
+  Generating SOPS file production:oidc.enc.yaml
+      Unchanged, skipping
+```
+
+**Why this matters:**
+- YubiKeys require PIN entry for different operations (age plugin vs smartcard)
+- **Before**: 2*N unlocks (decrypt + encrypt for each secret)
+- **After**: 2-3 unlocks total (one age batch, 1-2 SOPS batches)
+
+The tool decrypts all age files upfront to a temp directory, then processes SOPS operations referencing the pre-decrypted files.
+
+### 4. Better Error Messages
 
 Clear errors for missing files:
 
