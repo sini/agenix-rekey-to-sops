@@ -256,17 +256,33 @@ let
   commandsForNixidyHost =
     hostName: hostCfg:
     let
-      # Get all secrets with sopsOutput defined
+      defaultFile = hostCfg.config.age.sops.defaultFile;
+
+      # Get all secrets with sopsOutput defined or a rekeyFile (using defaultFile fallback)
       sopsSecrets = filterAttrs (
-        _name: secret: secret ? sopsOutput && secret.rekeyFile != null && !secret.intermediary
+        _name: secret:
+        secret.rekeyFile != null
+        && !secret.intermediary
+        && (secret ? sopsOutput || defaultFile != null)
       ) hostCfg.config.age.secrets;
 
-      # Convert to list with metadata
+      # Convert to list with metadata, synthesizing sopsOutput for secrets that use defaultFile
       secretsList = mapAttrsToList (
         name: secret:
+        let
+          sopsOutput =
+            if secret ? sopsOutput && secret.sopsOutput != null then
+              secret.sopsOutput
+            else
+              {
+                file = defaultFile;
+                key = name;
+                format = "str";
+              };
+        in
         secret
         // {
-          inherit name;
+          inherit name sopsOutput;
           hostConfig = hostCfg.config;
         }
       ) sopsSecrets;

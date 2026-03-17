@@ -235,6 +235,20 @@ in
               Example: ./. + "/.secrets/env/production"
             '';
           };
+
+          defaultFile = mkOption {
+            type = types.str;
+            default = "sops-secrets";
+            description = ''
+              Default SOPS file name to use for secrets that don't specify sopsOutput.file.
+
+              Secrets with rekeyFile but without sopsOutput will automatically
+              be added to this SOPS file using their secret name as the key.
+
+              Example: "secrets" will create secrets.enc.yaml
+            '';
+            example = "secrets";
+          };
         };
       };
       description = ''
