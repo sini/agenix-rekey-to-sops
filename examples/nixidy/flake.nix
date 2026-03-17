@@ -172,10 +172,7 @@
         ];
       };
 
-      # Expose sops-rekey as a top-level app for the wrapper to find
-      apps.${system}.sops-rekey = {
-        type = "app";
-        program = "${self.agenix-rekey.${system}.sops-rekey}/bin/agenix-sops-rekey";
-      };
+      # Expose sops-rekey as a package for the wrapper to find (matches agenix-rekey pattern)
+      packages.${system}.sops-rekey = self.agenix-rekey.${system}.sops-rekey;
     };
 }
