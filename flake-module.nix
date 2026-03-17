@@ -52,26 +52,21 @@
         };
       };
 
-      # Expose sops-rekey as an app so it can be run with `nix run`
-      config.apps.sops-rekey = {
-        type = "app";
-        program = lib.getExe (
-          import ./apps/sops-rekey.nix {
-            nodes = import (inputs.agenix-rekey + "/nix/select-nodes.nix") {
-              inherit (config.agenix-rekey)
-                nixosConfigurations
-                darwinConfigurations
-                homeConfigurations
-                extraConfigurations
-                collectHomeManagerConfigurations
-                ;
-              inherit (config.agenix-rekey.pkgs) lib;
-            };
-            inherit (config.agenix-rekey) pkgs;
-            agePackage = _: config.agenix-rekey.agePackage;
-            userFlake = self;
-          }
-        );
+      # Expose sops-rekey as a package so it can be run with `nix run` (like other agenix commands)
+      config.packages.sops-rekey = import ./apps/sops-rekey.nix {
+        nodes = import (inputs.agenix-rekey + "/nix/select-nodes.nix") {
+          inherit (config.agenix-rekey)
+            nixosConfigurations
+            darwinConfigurations
+            homeConfigurations
+            extraConfigurations
+            collectHomeManagerConfigurations
+            ;
+          inherit (config.agenix-rekey.pkgs) lib;
+        };
+        inherit (config.agenix-rekey) pkgs;
+        agePackage = _: config.agenix-rekey.agePackage;
+        userFlake = self;
       };
     }
   );
