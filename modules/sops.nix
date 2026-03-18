@@ -87,31 +87,6 @@ in
                 default = null;
               };
 
-              # Generator settings (extends agenix-rekey without forking)
-              settings = mkOption {
-                type = types.nullOr types.attrs;
-                default = null;
-                description = ''
-                  Settings to provide to a generator script.
-
-                  This extends agenix-rekey's generator functionality without requiring a fork.
-                  The settings are passed to the generator script and can be used for
-                  configuring things like certificate validity, subject details, etc.
-                '';
-                example = literalExpression ''
-                  {
-                    validity = 365;
-                    subject = {
-                      country = "US";
-                      state = "California";
-                      location = "San Francisco";
-                      organization = "My Company";
-                      organization-unit = "DevOps";
-                    };
-                  }
-                '';
-              };
-
               # SOPS-specific options
               sopsOutput = mkOption {
                 type = types.nullOr (
