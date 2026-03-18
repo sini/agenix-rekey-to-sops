@@ -42,7 +42,6 @@
               age = {
                 # SOPS configuration
                 sops = {
-                  configFile = ./.sops.yaml;
                   outputDir = ./. + "/.secrets/prod"; # Only used for local mode
                 };
 

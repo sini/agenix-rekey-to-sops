@@ -215,15 +215,6 @@ in
     sops = mkOption {
       type = types.submodule {
         options = {
-          configFile = mkOption {
-            type = types.path;
-            default = ./.sops.yaml;
-            description = ''
-              Path to the .sops.yaml configuration file.
-              This file defines the age/pgp keys used for SOPS encryption.
-            '';
-          };
-
           outputDir = mkOption {
             type = types.nullOr types.path;
             default = null;

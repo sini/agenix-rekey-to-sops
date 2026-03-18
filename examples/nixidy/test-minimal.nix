@@ -14,7 +14,6 @@ let
       {
         age = {
           sops = {
-            configFile = ./.sops.yaml;
             outputDir = ./.secrets/env/test;
           };
 
@@ -56,6 +55,5 @@ in
   test-secret-format = testConfig.config.age.secrets.test-secret.sopsOutput.format;
 
   # Verify sops config
-  sopsConfigFile = toString testConfig.config.age.sops.configFile;
   sopsOutputDir = toString testConfig.config.age.sops.outputDir;
 }
