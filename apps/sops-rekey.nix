@@ -134,9 +134,9 @@ let
       needs_regeneration=false
 
       if [[ -f ${escapeShellArg outputPath} ]]; then
-        # Check if SOPS recipients have changed
-        existing_recipients=$(${pkgs.sops}/bin/sops -d --extract '["sops"]["age"]' ${escapeShellArg outputPath} 2>/dev/null | ${pkgs.yq-go}/bin/yq eval 'map(.recipient) | sort | @json' - 2>/dev/null || echo "[]")
-        expected_recipients=$(echo ${escapeShellArg sopsAgeRecipients} | tr ',' '\n' | sort | ${pkgs.jq}/bin/jq -R . | ${pkgs.jq}/bin/jq -s .)
+        # Check if SOPS recipients have changed by comparing the sops.age section
+        existing_recipients=$(${pkgs.yq-go}/bin/yq eval '.sops.age[].recipient' ${escapeShellArg outputPath} 2>/dev/null | sort | tr '\n' ',' | sed 's/,$//' || echo "")
+        expected_recipients=$(echo ${escapeShellArg sopsAgeRecipients} | tr ',' '\n' | sort | tr '\n' ',' | sed 's/,$//')
 
         if [[ "$existing_recipients" != "$expected_recipients" ]]; then
           echo -e "\033[1;33m      Recipients changed, regenerating\033[m"
@@ -205,6 +205,7 @@ let
         if ${pkgs.sops}/bin/sops -e \
           --config ${escapeShellArg "${relativeOutputDir}/.sops.yaml"} \
           --age ${escapeShellArg sopsAgeRecipients} \
+          --input-type yaml \
           --output-type yaml \
           "$yaml_tmp" > ${escapeShellArg outputPath}; then
           echo -e "\033[1;32m      Created\033[m \033[34m${outputPath}\033[m"
