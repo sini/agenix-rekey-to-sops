@@ -89,7 +89,7 @@ let
 
   # Generate SOPS file for a group of secrets
   generateSopsFileScript =
-    sopsAgeRecipients: hostName: fileName: secrets:
+    sopsAgeRecipients: sopsAgeKeyFiles: hostName: fileName: secrets:
     let
       hostCfg = (builtins.head secrets).hostConfig;
       outputDir = builtins.unsafeDiscardStringContext (toString hostCfg.age.sops.outputDir);
@@ -134,6 +134,15 @@ let
       needs_regeneration=false
 
       if [[ -f ${escapeShellArg outputPath} ]]; then
+        # Create temp file with all master identities for SOPS decryption
+        SOPS_KEY_FILE=$(${pkgs.coreutils}/bin/mktemp)
+        trap "rm -f $SOPS_KEY_FILE" EXIT
+        ${concatMapStrings (keyFile: ''
+          cat ${escapeShellArg keyFile} >> "$SOPS_KEY_FILE"
+          echo "" >> "$SOPS_KEY_FILE"
+        '') sopsAgeKeyFiles}
+        export SOPS_AGE_KEY_FILE="$SOPS_KEY_FILE"
+
         # Check if SOPS recipients have changed by comparing the sops.age section
         existing_recipients=$(${pkgs.yq-go}/bin/yq eval '.sops.age[].recipient' ${escapeShellArg outputPath} 2>/dev/null | sort | tr '\n' ',' | sed 's/,$//' || echo "")
         expected_recipients=$(echo ${escapeShellArg sopsAgeRecipients} | tr ',' '\n' | sort | tr '\n' ',' | sed 's/,$//')
@@ -224,7 +233,7 @@ let
 
   # Generate binary SOPS file
   generateBinarySecretScript =
-    sopsAgeRecipients: secret:
+    sopsAgeRecipients: sopsAgeKeyFiles: secret:
     let
       outputDir = builtins.unsafeDiscardStringContext (toString secret.hostConfig.age.sops.outputDir);
       relativeOutputDir = relativeToFlake outputDir;
@@ -242,6 +251,15 @@ let
       escapedPath=${escapeShellArg (escapeShellArg rekeyFileRelative)}
 
       if [[ -f ${escapeShellArg outputPath} ]]; then
+        # Create temp file with all master identities for SOPS decryption
+        SOPS_KEY_FILE=$(${pkgs.coreutils}/bin/mktemp)
+        trap "rm -f $SOPS_KEY_FILE" EXIT
+        ${concatMapStrings (keyFile: ''
+          cat ${escapeShellArg keyFile} >> "$SOPS_KEY_FILE"
+          echo "" >> "$SOPS_KEY_FILE"
+        '') sopsAgeKeyFiles}
+        export SOPS_AGE_KEY_FILE="$SOPS_KEY_FILE"
+
         # Check if decrypted input exists
         if [[ ! -f "$DECRYPT_DIR/$escapedPath" ]]; then
           echo -e "\033[1;33m      Decrypted input missing: ${escapeShellArg rekeyFileRelative}, regenerating\033[m"
@@ -306,6 +324,10 @@ let
       hostRecipients = unique (builtins.map extractRecipient hostMasterIdentities);
       sopsAgeRecipients = concatStringsSep "," hostRecipients;
 
+      # Concatenate all master identity files for SOPS decryption
+      # SOPS can use a single file containing multiple identities
+      sopsAgeKeyFiles = builtins.map (i: relativeToFlake i.identity) hostMasterIdentities;
+
       defaultFile = hostCfg.config.age.sops.defaultFile;
       outputDir = builtins.unsafeDiscardStringContext (toString hostCfg.config.age.sops.outputDir);
       relativeOutputDir = relativeToFlake outputDir;
@@ -359,12 +381,13 @@ let
         # Generate grouped YAML files
         ${concatStringsSep "\n" (
           mapAttrsToList (
-            fileName: secrets: generateSopsFileScript sopsAgeRecipients hostName fileName secrets
+            fileName: secrets:
+            generateSopsFileScript sopsAgeRecipients sopsAgeKeyFiles hostName fileName secrets
           ) grouped
         )}
 
         # Generate binary files
-        ${concatMapStrings (generateBinarySecretScript sopsAgeRecipients) binarySecrets}
+        ${concatMapStrings (generateBinarySecretScript sopsAgeRecipients sopsAgeKeyFiles) binarySecrets}
       '';
 
   # Appended to PATH
