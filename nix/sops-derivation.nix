@@ -113,6 +113,7 @@ let
       ${pkgs.sops}/bin/sops -e \
         --config "$out/.sops.yaml" \
         --age ${escapeShellArg sopsAgeRecipients} \
+        --output-type yaml \
         "$yaml_tmp" > "$out/${outputPath}"
 
       rm -f "$yaml_tmp"

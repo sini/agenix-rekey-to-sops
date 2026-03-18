@@ -134,14 +134,27 @@ let
       needs_regeneration=false
 
       if [[ -f ${escapeShellArg outputPath} ]]; then
-        # Check if key set matches first
-        existing_keys=$(${pkgs.sops}/bin/sops -d ${escapeShellArg outputPath} 2>/dev/null | ${pkgs.yq-go}/bin/yq eval 'keys | sort | @json' - 2>/dev/null || echo "[]")
-        expected_keys=${escapeShellArg expectedKeysJson}
+        # Check if SOPS recipients have changed
+        existing_recipients=$(${pkgs.sops}/bin/sops -d --extract '["sops"]["age"]' ${escapeShellArg outputPath} 2>/dev/null | ${pkgs.yq-go}/bin/yq eval 'map(.recipient) | sort | @json' - 2>/dev/null || echo "[]")
+        expected_recipients=$(echo ${escapeShellArg sopsAgeRecipients} | tr ',' '\n' | sort | ${pkgs.jq}/bin/jq -R . | ${pkgs.jq}/bin/jq -s .)
 
-        if [[ "$existing_keys" != "$expected_keys" ]]; then
-          echo -e "\033[1;33m      Key set changed (expected: $expected_keys, got: $existing_keys), regenerating\033[m"
+        if [[ "$existing_recipients" != "$expected_recipients" ]]; then
+          echo -e "\033[1;33m      Recipients changed, regenerating\033[m"
           needs_regeneration=true
-        else
+        fi
+
+        # Check if key set matches
+        if [[ "$needs_regeneration" == false ]]; then
+          existing_keys=$(${pkgs.sops}/bin/sops -d ${escapeShellArg outputPath} 2>/dev/null | ${pkgs.yq-go}/bin/yq eval 'keys | sort | @json' - 2>/dev/null || echo "[]")
+          expected_keys=${escapeShellArg expectedKeysJson}
+
+          if [[ "$existing_keys" != "$expected_keys" ]]; then
+            echo -e "\033[1;33m      Key set changed (expected: $expected_keys, got: $existing_keys), regenerating\033[m"
+            needs_regeneration=true
+          fi
+        fi
+
+        if [[ "$needs_regeneration" == false ]]; then
           # Keys match, check if all input files exist
           missing_inputs=false
           ${concatMapStrings (f: ''
@@ -192,6 +205,7 @@ let
         if ${pkgs.sops}/bin/sops -e \
           --config ${escapeShellArg "${relativeOutputDir}/.sops.yaml"} \
           --age ${escapeShellArg sopsAgeRecipients} \
+          --output-type yaml \
           "$yaml_tmp" > ${escapeShellArg outputPath}; then
           echo -e "\033[1;32m      Created\033[m \033[34m${outputPath}\033[m"
         else
