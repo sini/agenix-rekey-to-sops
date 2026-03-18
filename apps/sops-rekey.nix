@@ -190,6 +190,7 @@ let
         # Encrypt with SOPS using age recipients from masterIdentities
         mkdir -p ${escapeShellArg relativeOutputDir}
         if ${pkgs.sops}/bin/sops -e \
+          --config ${escapeShellArg "${relativeOutputDir}/.sops.yaml"} \
           --age ${escapeShellArg sopsAgeRecipients} \
           "$yaml_tmp" > ${escapeShellArg outputPath}; then
           echo -e "\033[1;32m      Created\033[m \033[34m${outputPath}\033[m"
@@ -258,6 +259,7 @@ let
         # Encrypt entire file with SOPS using age recipients from masterIdentities
         mkdir -p ${escapeShellArg relativeOutputDir}
         if ${pkgs.sops}/bin/sops -e \
+          --config ${escapeShellArg "${relativeOutputDir}/.sops.yaml"} \
           --age ${escapeShellArg sopsAgeRecipients} \
           "$DECRYPT_DIR/$escapedPath" > ${escapeShellArg outputPath}; then
           echo -e "\033[1;32m      Created\033[m \033[34m${outputPath}\033[m"

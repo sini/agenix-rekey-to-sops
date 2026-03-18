@@ -111,6 +111,7 @@ let
 
       # Encrypt with SOPS
       ${pkgs.sops}/bin/sops -e \
+        --config "$out/.sops.yaml" \
         --age ${escapeShellArg sopsAgeRecipients} \
         "$yaml_tmp" > "$out/${outputPath}"
 
@@ -137,6 +138,7 @@ let
 
       # Encrypt with SOPS
       ${pkgs.sops}/bin/sops -e \
+        --config "$out/.sops.yaml" \
         --age ${escapeShellArg sopsAgeRecipients} \
         "$binary_tmp" > "$out/${outputPath}"
 
