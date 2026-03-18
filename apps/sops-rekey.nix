@@ -120,14 +120,14 @@ let
           if [[ -f "$DECRYPT_DIR/${escapedPath}" ]]; then
             secret_value=$(cat "$DECRYPT_DIR/${escapedPath}"${encodeCmd})
           else
-            echo "\033[1;31m      Error: Decrypted file missing for ${escapedPath}\033[m" >&2
+            echo -e "\033[1;31m      Error: Decrypted file missing for ${escapedPath}\033[m" >&2
             exit 1
           fi
           echo "${escapeShellArg secret.sopsOutput.key}: $secret_value" >> "$yaml_tmp"
         '';
     in
     ''
-      echo "\033[1;32m  Generating\033[m \033[90mSOPS file \033[33m${hostName}\033[90m:\033[34m${fileName}.enc.yaml\033[m"
+      echo -e "\033[1;32m  Generating\033[m \033[90mSOPS file \033[33m${hostName}\033[90m:\033[34m${fileName}.enc.yaml\033[m"
 
       # Check if we can skip generation
       skip_generation=false
@@ -139,7 +139,7 @@ let
         expected_keys=${escapeShellArg expectedKeysJson}
 
         if [[ "$existing_keys" != "$expected_keys" ]]; then
-          echo "\033[1;33m      Key set changed (expected: $expected_keys, got: $existing_keys), regenerating\033[m"
+          echo -e "\033[1;33m      Key set changed (expected: $expected_keys, got: $existing_keys), regenerating\033[m"
           needs_regeneration=true
         else
           # Keys match, check if all input files exist
@@ -147,7 +147,7 @@ let
           ${concatMapStrings (f: ''
             escapedPath=${escapeShellArg (escapeShellArg f)}
             if [[ ! -f "$DECRYPT_DIR/$escapedPath" ]]; then
-              echo "\033[1;33m      Decrypted input missing: ${escapeShellArg f}, regenerating\033[m"
+              echo -e "\033[1;33m      Decrypted input missing: ${escapeShellArg f}, regenerating\033[m"
               missing_inputs=true
             fi
           '') rekeyFiles}
@@ -166,10 +166,10 @@ let
             new_plaintext=$(sort "$yaml_tmp")
 
             if [[ "$existing_decrypted" == "$new_plaintext" ]]; then
-              echo "\033[1;90m      Unchanged, skipping\033[m"
+              echo -e "\033[1;90m      Unchanged, skipping\033[m"
               skip_generation=true
             else
-              echo "\033[1;33m      Content changed, regenerating\033[m"
+              echo -e "\033[1;33m      Content changed, regenerating\033[m"
               needs_regeneration=true
             fi
 
@@ -192,9 +192,9 @@ let
         if ${pkgs.sops}/bin/sops -e \
           --age ${escapeShellArg sopsAgeRecipients} \
           "$yaml_tmp" > ${escapeShellArg outputPath}; then
-          echo "\033[1;32m      Created\033[m \033[34m${outputPath}\033[m"
+          echo -e "\033[1;32m      Created\033[m \033[34m${outputPath}\033[m"
         else
-          echo "\033[1;31m      Failed to encrypt ${outputPath}\033[m" >&2
+          echo -e "\033[1;31m      Failed to encrypt ${outputPath}\033[m" >&2
           rm -f "$yaml_tmp"
           exit 1
         fi
@@ -217,7 +217,7 @@ let
       rekeyFileRelative = relativeToFlake secret.rekeyFile;
     in
     ''
-      echo "\033[1;32m  Generating\033[m \033[90mbinary SOPS file \033[34m${secret.name}\033[m"
+      echo -e "\033[1;32m  Generating\033[m \033[90mbinary SOPS file \033[34m${secret.name}\033[m"
 
       # Check if we can skip generation
       skip_generation=false
@@ -228,7 +228,7 @@ let
       if [[ -f ${escapeShellArg outputPath} ]]; then
         # Check if decrypted input exists
         if [[ ! -f "$DECRYPT_DIR/$escapedPath" ]]; then
-          echo "\033[1;33m      Decrypted input missing: ${escapeShellArg rekeyFileRelative}, regenerating\033[m"
+          echo -e "\033[1;33m      Decrypted input missing: ${escapeShellArg rekeyFileRelative}, regenerating\033[m"
           needs_regeneration=true
         else
           # Compare plaintext content with pre-decrypted file
@@ -236,10 +236,10 @@ let
           new_plaintext=$(cat "$DECRYPT_DIR/$escapedPath")
 
           if [[ "$existing_decrypted" == "$new_plaintext" ]]; then
-            echo "\033[1;90m      Unchanged, skipping\033[m"
+            echo -e "\033[1;90m      Unchanged, skipping\033[m"
             skip_generation=true
           else
-            echo "\033[1;33m      Content changed, regenerating\033[m"
+            echo -e "\033[1;33m      Content changed, regenerating\033[m"
             needs_regeneration=true
           fi
         fi
@@ -250,8 +250,8 @@ let
       if [[ "$skip_generation" == false && "$needs_regeneration" == true ]]; then
         # Verify decrypted input file exists
         if [[ ! -f "$DECRYPT_DIR/$escapedPath" ]]; then
-          echo "\033[1;31m      Error: Cannot generate SOPS file - missing decrypted file: ${escapeShellArg rekeyFileRelative}\033[m" >&2
-          echo "\033[1;33m      Run 'agenix generate' to create missing secrets\033[m" >&2
+          echo -e "\033[1;31m      Error: Cannot generate SOPS file - missing decrypted file: ${escapeShellArg rekeyFileRelative}\033[m" >&2
+          echo -e "\033[1;33m      Run 'agenix generate' to create missing secrets\033[m" >&2
           exit 1
         fi
 
@@ -260,9 +260,9 @@ let
         if ${pkgs.sops}/bin/sops -e \
           --age ${escapeShellArg sopsAgeRecipients} \
           "$DECRYPT_DIR/$escapedPath" > ${escapeShellArg outputPath}; then
-          echo "\033[1;32m      Created\033[m \033[34m${outputPath}\033[m"
+          echo -e "\033[1;32m      Created\033[m \033[34m${outputPath}\033[m"
         else
-          echo "\033[1;31m      Failed to encrypt ${outputPath}\033[m" >&2
+          echo -e "\033[1;31m      Failed to encrypt ${outputPath}\033[m" >&2
           exit 1
         fi
       fi
@@ -331,12 +331,12 @@ let
       ""
     else
       ''
-        echo "\033[1;36m   Generating SOPS files for\033[m \033[32m${hostName}\033[m"
+        echo -e "\033[1;36m   Generating SOPS files for\033[m \033[32m${hostName}\033[m"
 
         # Write .sops.yaml to outputDir for manual SOPS operations (sops edit, sops -d)
         mkdir -p ${escapeShellArg relativeOutputDir}
         printf '%s\n' ${escapeShellArg (sopsYamlContent hostRecipients)} > ${escapeShellArg "${relativeOutputDir}/.sops.yaml"}
-        echo "\033[1;32m  Generated\033[m \033[90m.sops.yaml in \033[34m${relativeOutputDir}\033[m"
+        echo -e "\033[1;32m  Generated\033[m \033[90m.sops.yaml in \033[34m${relativeOutputDir}\033[m"
         SOPS_FILES+=("${relativeOutputDir}/.sops.yaml")
 
         # Generate grouped YAML files
@@ -368,7 +368,7 @@ pkgs.writeShellScriptBin "agenix-sops-rekey" ''
 
   export PATH="''${PATH:+"''${PATH}:"}"${escapeShellArg binPath}
 
-  function die() { echo "\033[1;31merror:\033[m $*" >&2; exit 1; }
+  function die() { echo -e "\033[1;31merror:\033[m $*" >&2; exit 1; }
 
   function show_help() {
     echo 'Usage: agenix sops-rekey [OPTIONS]'
@@ -406,7 +406,7 @@ pkgs.writeShellScriptBin "agenix-sops-rekey" ''
   ${
     if sopsNodes == { } then
       ''
-        echo "\033[1;33mNo SOPS configurations found.\033[m"
+        echo -e "\033[1;33mNo SOPS configurations found.\033[m"
         echo "Add extraConfigurations with age.sops schema to your flake to use sops-rekey."
         exit 0
       ''
@@ -432,7 +432,7 @@ pkgs.writeShellScriptBin "agenix-sops-rekey" ''
         DECRYPT_DIR=$(mktemp -d)
         trap 'rm -rf "$DECRYPT_DIR"' EXIT
 
-        echo "\033[1;36m   Decrypting age inputs (YubiKey unlock for age plugin)...\033[m"
+        echo -e "\033[1;36m   Decrypting age inputs (YubiKey unlock for age plugin)...\033[m"
 
         # Decrypt all age files upfront to minimize YubiKey unlocks
         ${concatMapStrings (rekeyFile: ''
@@ -444,14 +444,14 @@ pkgs.writeShellScriptBin "agenix-sops-rekey" ''
 
           # Decrypt file
           if ${ageMasterDecrypt} "$file_path" > "$DECRYPT_DIR/$escaped_path" 2>/dev/null; then
-            echo "\033[1;90m      Decrypted: $file_path\033[m"
+            echo -e "\033[1;90m      Decrypted: $file_path\033[m"
           else
-            echo "\033[1;31m      Failed to decrypt: $file_path\033[m" >&2
+            echo -e "\033[1;31m      Failed to decrypt: $file_path\033[m" >&2
             exit 1
           fi
         '') allRekeyFiles}
 
-        echo "\033[1;32m   Decrypted ${builtins.toString (builtins.length allRekeyFiles)} age files\033[m"
+        echo -e "\033[1;32m   Decrypted ${builtins.toString (builtins.length allRekeyFiles)} age files\033[m"
         echo ""
 
         ${concatStringsSep "\n" (mapAttrsToList commandsForNixidyHost sopsNodes)}
@@ -460,9 +460,9 @@ pkgs.writeShellScriptBin "agenix-sops-rekey" ''
 
   # Add to git if requested
   if [[ "$ADD_TO_GIT" == true && ''${#SOPS_FILES[@]} -gt 0 ]]; then
-    echo "\033[1;36m   Adding\033[m \033[36m''${#SOPS_FILES[@]} SOPS files to git\033[m"
+    echo -e "\033[1;36m   Adding\033[m \033[36m''${#SOPS_FILES[@]} SOPS files to git\033[m"
     git add "''${SOPS_FILES[@]}"
   fi
 
-  echo "\033[1;32m✓ SOPS generation complete\033[m"
+  echo -e "\033[1;32m✓ SOPS generation complete\033[m"
 ''
