@@ -123,7 +123,10 @@ let
             echo -e "\033[1;31m      Error: Decrypted file missing for ${escapedPath}\033[m" >&2
             exit 1
           fi
-          echo "${escapeShellArg secret.sopsOutput.key}: $secret_value" >> "$yaml_tmp"
+          # Use yq to properly handle multi-line and special YAML values
+          export secret_value
+          export secret_key=${escapeShellArg secret.sopsOutput.key}
+          ${pkgs.yq-go}/bin/yq eval -i '.[strenv(secret_key)] = strenv(secret_value)' "$yaml_tmp"
         '';
     in
     ''
@@ -178,14 +181,15 @@ let
             needs_regeneration=true
           else
             # All inputs exist, compare plaintext content
-            yaml_tmp=$(${pkgs.coreutils}/bin/mktemp)
+            yaml_tmp=$(${pkgs.coreutils}/bin/mktemp --suffix=.yaml)
+            echo '{}' > "$yaml_tmp"
             trap "rm -f $yaml_tmp" EXIT
 
             ${concatMapStrings generateYamlEntry secrets}
 
             # Compare plaintext YAML with decrypted existing file
-            existing_decrypted=$(${pkgs.sops}/bin/sops -d ${escapeShellArg outputPath} 2>/dev/null | sort)
-            new_plaintext=$(sort "$yaml_tmp")
+            existing_decrypted=$(${pkgs.sops}/bin/sops -d ${escapeShellArg outputPath} 2>/dev/null | ${pkgs.yq-go}/bin/yq eval 'to_entries | sort_by(.key) | from_entries' -)
+            new_plaintext=$(${pkgs.yq-go}/bin/yq eval 'to_entries | sort_by(.key) | from_entries' "$yaml_tmp")
 
             if [[ "$existing_decrypted" == "$new_plaintext" ]]; then
               echo -e "\033[1;90m      Unchanged, skipping\033[m"
@@ -204,7 +208,8 @@ let
 
       if [[ "$skip_generation" == false && "$needs_regeneration" == true ]]; then
         # Generate new file
-        yaml_tmp=$(${pkgs.coreutils}/bin/mktemp)
+        yaml_tmp=$(${pkgs.coreutils}/bin/mktemp --suffix=.yaml)
+        echo '{}' > "$yaml_tmp"
         trap "rm -f $yaml_tmp" EXIT
 
         ${concatMapStrings generateYamlEntry secrets}
@@ -458,8 +463,10 @@ pkgs.writeShellScriptBin "agenix-sops-rekey" ''
             mapAttrsToList (
               _hostName: hostCfg:
               let
+                defaultFile = hostCfg.config.age.sops.defaultFile or null;
                 sopsSecrets = filterAttrs (
-                  _name: secret: secret ? sopsOutput && secret.rekeyFile != null && !secret.intermediary
+                  _name: secret:
+                  secret.rekeyFile != null && !secret.intermediary && (secret ? sopsOutput || defaultFile != null)
                 ) hostCfg.config.age.secrets;
               in
               builtins.map (s: relativeToFlake s.rekeyFile) (builtins.attrValues sopsSecrets)
