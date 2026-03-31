@@ -50,7 +50,7 @@
               agenix-rekey = inputs.agenix-rekey;
               nixpkgs = inputs.nixpkgs;
             };
-            agenix-rekey-to-sops = config.nixidyModules.default;
+            agenix-rekey-to-sops = config.sopsModules.default;
           };
 
           # Helper to configure agenix-rekey with sops-rekey app
@@ -123,7 +123,6 @@
 
       perSystem =
         {
-          config,
           pkgs,
           ...
         }:
