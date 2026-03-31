@@ -326,7 +326,11 @@ let
     let
       # Extract recipients from this host's master identities
       hostMasterIdentities = hostCfg.config.age.rekey.masterIdentities or [ ];
-      hostRecipients = unique (builtins.map extractRecipient hostMasterIdentities);
+      extractedRecipients = unique (builtins.map extractRecipient hostMasterIdentities);
+
+      # Use explicit recipients if provided, otherwise fall back to extracted ones
+      configRecipients = hostCfg.config.age.sops.recipients or null;
+      hostRecipients = if configRecipients != null then configRecipients else extractedRecipients;
       sopsAgeRecipients = concatStringsSep "," hostRecipients;
 
       # Concatenate all master identity files for SOPS decryption

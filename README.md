@@ -50,10 +50,9 @@ Seamlessly integrate SOPS-encrypted secrets with Kubernetes workflows while main
         };
 
         # Add unified agenix command to devshell
-        devshells.default.commands = [{
-          inherit (config.agenix-rekey-sops) package;
-          help = "Edit, generate, rekey secrets, and generate SOPS files";
-        }];
+        devShells.default = pkgs.mkShell {
+          nativeBuildInputs = [ config.agenix-rekey-sops.package ];
+        };
       };
 
       flake = {
@@ -61,7 +60,7 @@ Seamlessly integrate SOPS-encrypted secrets with Kubernetes workflows while main
         nixidyEnvs.x86_64-linux.production = inputs.nixidy.lib.mkEnv {
           pkgs = import inputs.nixpkgs { system = "x86_64-linux"; };
           modules = [
-            inputs.agenix-rekey-to-sops.nixidyModules.default
+            inputs.agenix-rekey-to-sops.sopsModules.default
             ./production.nix
           ];
         };
@@ -77,7 +76,6 @@ Seamlessly integrate SOPS-encrypted secrets with Kubernetes workflows while main
   age = {
     # SOPS configuration
     sops = {
-      configFile = ./.sops.yaml;
       outputDir = ./.secrets/prod;
     };
 
@@ -129,14 +127,11 @@ Seamlessly integrate SOPS-encrypted secrets with Kubernetes workflows while main
 }
 ```
 
-### 3. Create `.sops.yaml` configuration
+### 3. `.sops.yaml` configuration (auto-generated)
 
-```yaml
-creation_rules:
-  - path_regex: \.secrets/prod/.*\.enc\.ya?ml$
-    age:
-      - age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p
-```
+The tool auto-generates `.sops.yaml` in your `outputDir` with recipients extracted from `masterIdentities`. For example, if `outputDir = ./.secrets/prod`, it creates `.secrets/prod/.sops.yaml`:
+
+**Note:** The generated config encrypts to your master identities. To encrypt to different recipients (e.g., CI-only keys), use `age.sops.recipients` option.
 
 ### 4. Use the unified `agenix` command
 
@@ -164,6 +159,7 @@ agenix view <name> # View a secret
 The unified `agenix` command includes all standard agenix-rekey commands plus SOPS support:
 
 ### `agenix generate`
+
 Generates missing age-encrypted secrets using configured generators.
 
 ```bash
@@ -171,6 +167,7 @@ agenix generate
 ```
 
 ### `agenix sops-rekey`
+
 Converts age-encrypted secrets to SOPS format. **Smart optimization** skips unchanged files.
 
 ```bash
@@ -180,12 +177,14 @@ agenix sops-rekey --help    # Show all options
 ```
 
 **Optimization features:**
+
 - ✅ Skips files when content unchanged
 - ✅ Detects when secrets added/removed from groups
 - ✅ Batched decryption/encryption to minimize YubiKey unlocks
 - ✅ Clear error messages for missing input files
 
 ### `agenix rekey`
+
 Re-encrypts age secrets for hosts that require them.
 
 ```bash
@@ -193,6 +192,7 @@ agenix rekey
 ```
 
 ### `agenix edit <secret>`
+
 Edit age-encrypted secret with `$EDITOR`.
 
 ```bash
@@ -200,6 +200,7 @@ agenix edit database-password
 ```
 
 ### `agenix view <secret>`
+
 View decrypted age secret.
 
 ```bash
@@ -214,8 +215,15 @@ Configure SOPS output for a configuration/environment:
 
 ```nix
 age.sops = {
-  configFile = ./.sops.yaml;  # Path to SOPS config (required)
   outputDir = ./.secrets;      # Where to generate SOPS files (required)
+  defaultFile = "sops-secrets"; # Default SOPS file name (optional, default: "sops-secrets")
+
+  # By default, SOPS files are encrypted to the same age keys in `masterIdentities`
+  # (used to decrypt source age files). To encrypt to different recipients (e.g., CI-only keys):
+  recipients = [
+    "age1ci_server_key..."
+    "ssh-ed25519 AAAAofsomehost..."
+  ];
 };
 ```
 
@@ -261,6 +269,7 @@ database-password.sopsOutput = {
 ```
 
 Generated YAML:
+
 ```yaml
 database-password: my-secret-password
 ```
@@ -278,11 +287,13 @@ tls-cert.sopsOutput = {
 ```
 
 Generated YAML:
+
 ```yaml
 cert.pem: LS0tLS1CRUdJTi...
 ```
 
 **Why?** Kubernetes distinguishes between:
+
 - `stringData` - plain text (use `format = "str"`)
 - `data` - base64-encoded (use `format = "base64"`)
 
@@ -312,6 +323,7 @@ age.secrets = {
 ```
 
 Generates single file `database.enc.yaml`:
+
 ```yaml
 postgres: secret1
 mysql: secret2
@@ -323,6 +335,7 @@ redis: secret3
 The `sops-rekey` command intelligently skips regeneration when possible:
 
 ### 1. Key Set Detection
+
 Detects configuration changes (added/removed secrets):
 
 ```bash
@@ -334,6 +347,7 @@ $ agenix sops-rekey
 ```
 
 ### 2. Content Comparison
+
 Compares plaintext content before regenerating:
 
 ```bash
@@ -374,8 +388,9 @@ $ agenix sops-rekey
 ```
 
 **Why this matters:**
+
 - YubiKeys require PIN entry for different operations (age plugin vs smartcard)
-- **Before**: 2*N unlocks (decrypt + encrypt for each secret)
+- **Before**: 2\*N unlocks (decrypt + encrypt for each secret)
 - **After**: 2-3 unlocks total (one age batch, 1-2 SOPS batches)
 
 The tool decrypts all age files upfront to a temp directory, then processes SOPS operations referencing the pre-decrypted files.
@@ -510,6 +525,7 @@ When you deploy with vals:
 Example transformation:
 
 **Before vals:**
+
 ```yaml
 apiVersion: v1
 kind: Secret
@@ -518,6 +534,7 @@ data:
 ```
 
 **After vals:**
+
 ```yaml
 apiVersion: v1
 kind: Secret
@@ -530,11 +547,13 @@ data:
 ### Two-Layer Design
 
 **Layer 1: agenix-rekey Fork** (Minimal, ~30 lines)
+
 - Adds `extraConfigurations` parameter
 - Generic support for custom config systems
 - Potentially upstreamable
 
 **Layer 2: This Flake** (Extension, ~600 lines)
+
 - SOPS module with schema ([modules/sops.nix](modules/sops.nix))
 - `sops-rekey` command ([apps/sops-rekey.nix](apps/sops-rekey.nix))
 - flake-parts integration ([flake-module.nix](flake-module.nix))
@@ -577,7 +596,7 @@ If you're not using flake-parts, use the `configure` function:
     nixidyEnvs.${system}.production = nixidy.lib.mkEnv {
       inherit pkgs;
       modules = [
-        agenix-rekey-to-sops.nixidyModules.default
+        agenix-rekey-to-sops.sopsModules.default
         ./production.nix
       ];
     };
@@ -615,6 +634,7 @@ If you're not using flake-parts, use the `configure` function:
 ### For Deployment
 
 - **Vals:** For evaluating `ref+sops://` URIs
+
   ```bash
   nix-shell -p vals
   ```
@@ -664,7 +684,7 @@ nix flake check
 
 ```yaml
 creation_rules:
-  - path_regex: \.secrets/prod/.*\.enc\.ya?ml$  # Must match outputDir
+  - path_regex: \.secrets/prod/.*\.enc\.ya?ml$ # Must match outputDir
     age:
       - age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p
 ```
@@ -714,6 +734,7 @@ Binary files have `.enc` extension (not `.enc.yaml`).
 Built on top of [agenix-rekey](https://github.com/oddlama/agenix-rekey) by oddlama.
 
 Designed for use with:
+
 - [nixidy](https://github.com/arnarg/nixidy) - Kubernetes with Nix
 - [vals](https://github.com/helmfile/vals) - Secret templating
 - [SOPS](https://github.com/getsops/sops) - Secrets OPerationS

@@ -215,6 +215,26 @@ in
             '';
             example = "secrets";
           };
+
+          recipients = mkOption {
+            type = types.nullOr (types.listOf types.str);
+            default = null;
+            description = ''
+              Age recipients (public keys) to encrypt SOPS files to.
+
+              If null (default), recipients are extracted from masterIdentities.
+              If specified, these recipients are used instead for SOPS encryption.
+
+              This allows encrypting SOPS outputs to different keys than the
+              master identities used to decrypt source age files (e.g., CI-only keys).
+            '';
+            example = literalExpression ''
+              [
+                "age1ci_server_key..."
+                "ssh-ed25519 AAAAC3NzaC1lZDI1NT..."
+              ]
+            '';
+          };
         };
       };
       description = ''
