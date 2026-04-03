@@ -89,7 +89,7 @@ let
 
   # Generate SOPS file for a group of secrets
   generateSopsFileScript =
-    sopsAgeRecipients: sopsAgeKeyFiles: hostName: fileName: secrets:
+    sopsAgeKeyFiles: hostName: fileName: secrets:
     let
       hostCfg = (builtins.head secrets).hostConfig;
       outputDir = builtins.unsafeDiscardStringContext (toString hostCfg.age.sops.outputDir);
@@ -205,11 +205,10 @@ let
 
         ${concatMapStrings generateYamlEntry secrets}
 
-        # Encrypt with SOPS using age recipients from masterIdentities
+        # Encrypt with SOPS using creation_rules from .sops.yaml
         mkdir -p ${escapeShellArg relativeOutputDir}
         if ${pkgs.sops}/bin/sops -e \
           --config ${escapeShellArg "${relativeOutputDir}/.sops.yaml"} \
-          --age ${escapeShellArg sopsAgeRecipients} \
           --input-type yaml \
           --output-type yaml \
           "$yaml_tmp" > ${escapeShellArg outputPath}; then
@@ -229,7 +228,7 @@ let
 
   # Generate binary SOPS file
   generateBinarySecretScript =
-    sopsAgeRecipients: sopsAgeKeyFiles: secret:
+    sopsAgeKeyFiles: secret:
     let
       outputDir = builtins.unsafeDiscardStringContext (toString secret.hostConfig.age.sops.outputDir);
       relativeOutputDir = relativeToFlake outputDir;
@@ -285,11 +284,10 @@ let
           exit 1
         fi
 
-        # Encrypt entire file with SOPS using age recipients from masterIdentities
+        # Encrypt entire file with SOPS using creation_rules from .sops.yaml
         mkdir -p ${escapeShellArg relativeOutputDir}
         if ${pkgs.sops}/bin/sops -e \
           --config ${escapeShellArg "${relativeOutputDir}/.sops.yaml"} \
-          --age ${escapeShellArg sopsAgeRecipients} \
           "$DECRYPT_DIR/$escapedPath" > ${escapeShellArg outputPath}; then
           echo -e "\033[1;32m      Created\033[m \033[34m${outputPath}\033[m"
         else
@@ -332,23 +330,6 @@ let
               age = extractedRecipients;
             }
           ];
-
-      # For backward compatibility with encryption commands, extract age recipients
-      # This is used for the --age parameter in sops -e commands
-      sopsAgeRecipients =
-        let
-          # Extract age recipients from first creation rule that has age field
-          ageRulesWithAge = builtins.filter (r: r ? age) creationRules;
-          ageRecipients =
-            if ageRulesWithAge != [ ] then
-              let
-                firstAgeRule = builtins.head ageRulesWithAge;
-              in
-              if builtins.isList firstAgeRule.age then firstAgeRule.age else [ firstAgeRule.age ]
-            else
-              extractedRecipients;
-        in
-        concatStringsSep "," ageRecipients;
 
       # Concatenate all master identity files for SOPS decryption
       # SOPS can use a single file containing multiple identities
@@ -408,12 +389,12 @@ let
         ${concatStringsSep "\n" (
           mapAttrsToList (
             fileName: secrets:
-            generateSopsFileScript sopsAgeRecipients sopsAgeKeyFiles hostName fileName secrets
+            generateSopsFileScript sopsAgeKeyFiles hostName fileName secrets
           ) grouped
         )}
 
         # Generate binary files
-        ${concatMapStrings (generateBinarySecretScript sopsAgeRecipients sopsAgeKeyFiles) binarySecrets}
+        ${concatMapStrings (generateBinarySecretScript sopsAgeKeyFiles) binarySecrets}
       '';
 
   # Appended to PATH
