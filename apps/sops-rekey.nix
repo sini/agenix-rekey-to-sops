@@ -89,12 +89,15 @@ let
 
   # Generate SOPS file for a group of secrets
   generateSopsFileScript =
-    sopsAgeKeyFiles: hostName: fileName: secrets:
+    sopsAgeKeyFiles: hostName: fileName: secrets: creationRules:
     let
       hostCfg = (builtins.head secrets).hostConfig;
       outputDir = builtins.unsafeDiscardStringContext (toString hostCfg.age.sops.outputDir);
       relativeOutputDir = relativeToFlake outputDir;
       outputPath = "${relativeOutputDir}/${fileName}.enc.yaml";
+
+      # Serialize creation_rules for comparison
+      creationRulesJson = builtins.toJSON creationRules;
 
       # Get all rekey files for validation
       rekeyFiles = builtins.map (s: relativeToFlake s.rekeyFile) secrets;
@@ -146,8 +149,14 @@ let
         '') sopsAgeKeyFiles}
         export SOPS_AGE_KEY_FILE="$SOPS_KEY_FILE"
 
-        # Check if key set matches (this implicitly detects creation_rules changes)
-        if true; then
+        # Check if .sops.yaml is newer than the encrypted file (config changed)
+        if [[ ${escapeShellArg "${relativeOutputDir}/.sops.yaml"} -nt ${escapeShellArg outputPath} ]]; then
+          echo -e "\033[1;33m      .sops.yaml changed, regenerating\033[m"
+          needs_regeneration=true
+        fi
+
+        # Check if key set matches
+        if [[ "$needs_regeneration" == false ]]; then
           existing_keys=$(${pkgs.sops}/bin/sops -d ${escapeShellArg outputPath} 2>/dev/null | ${pkgs.yq-go}/bin/yq eval 'keys | sort | @json' - 2>/dev/null || echo "[]")
           expected_keys=${escapeShellArg expectedKeysJson}
 
@@ -255,11 +264,17 @@ let
         '') sopsAgeKeyFiles}
         export SOPS_AGE_KEY_FILE="$SOPS_KEY_FILE"
 
+        # Check if .sops.yaml is newer than the encrypted file (config changed)
+        if [[ ${escapeShellArg "${relativeOutputDir}/.sops.yaml"} -nt ${escapeShellArg outputPath} ]]; then
+          echo -e "\033[1;33m      .sops.yaml changed, regenerating\033[m"
+          needs_regeneration=true
+        fi
+
         # Check if decrypted input exists
-        if [[ ! -f "$DECRYPT_DIR/$escapedPath" ]]; then
+        if [[ "$needs_regeneration" == false && ! -f "$DECRYPT_DIR/$escapedPath" ]]; then
           echo -e "\033[1;33m      Decrypted input missing: ${escapeShellArg rekeyFileRelative}, regenerating\033[m"
           needs_regeneration=true
-        else
+        elif [[ "$needs_regeneration" == false ]]; then
           # Compare plaintext content with pre-decrypted file
           existing_decrypted=$(${pkgs.sops}/bin/sops -d ${escapeShellArg outputPath} 2>/dev/null)
           new_plaintext=$(cat "$DECRYPT_DIR/$escapedPath")
@@ -389,7 +404,7 @@ let
         ${concatStringsSep "\n" (
           mapAttrsToList (
             fileName: secrets:
-            generateSopsFileScript sopsAgeKeyFiles hostName fileName secrets
+            generateSopsFileScript sopsAgeKeyFiles hostName fileName secrets creationRules
           ) grouped
         )}
 
