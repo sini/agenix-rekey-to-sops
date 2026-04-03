@@ -149,9 +149,34 @@ let
         '') sopsAgeKeyFiles}
         export SOPS_AGE_KEY_FILE="$SOPS_KEY_FILE"
 
-        # Check if .sops.yaml is newer than the encrypted file (config changed)
-        if [[ ${escapeShellArg "${relativeOutputDir}/.sops.yaml"} -nt ${escapeShellArg outputPath} ]]; then
-          echo -e "\033[1;33m      .sops.yaml changed, regenerating\033[m"
+        # Check if encryption keys/recipients changed by comparing SOPS metadata
+        # We check key types and counts - if age/pgp/vault structure differs, regenerate
+        expected_creation_rules=${escapeShellArg creationRulesJson}
+
+        # Extract what key types are present in the existing file
+        existing_has_age=$(${pkgs.yq-go}/bin/yq eval '.sops.age // [] | length' ${escapeShellArg outputPath} 2>/dev/null || echo "0")
+        existing_has_pgp=$(${pkgs.yq-go}/bin/yq eval '.sops.pgp // [] | length' ${escapeShellArg outputPath} 2>/dev/null || echo "0")
+        existing_has_kms=$(${pkgs.yq-go}/bin/yq eval '.sops.kms // [] | length' ${escapeShellArg outputPath} 2>/dev/null || echo "0")
+        existing_has_vault=$(${pkgs.yq-go}/bin/yq eval '.sops.hc_vault // [] | length' ${escapeShellArg outputPath} 2>/dev/null || echo "0")
+
+        # Check what the expected creation_rules specify
+        expected_has_age=$(echo "$expected_creation_rules" | ${pkgs.jq}/bin/jq '[.[] | select(.age)] | length')
+        expected_has_pgp=$(echo "$expected_creation_rules" | ${pkgs.jq}/bin/jq '[.[] | select(.pgp)] | length')
+        expected_has_vault=$(echo "$expected_creation_rules" | ${pkgs.jq}/bin/jq '[.[] | select(.hc_vault_transit_uri)] | length')
+
+        # If key type presence differs, regenerate
+        # Convert to boolean: has keys (>0) vs no keys (==0)
+        existing_age_present=$([[ "$existing_has_age" -gt 0 ]] && echo "1" || echo "0")
+        existing_pgp_present=$([[ "$existing_has_pgp" -gt 0 ]] && echo "1" || echo "0")
+        existing_vault_present=$([[ "$existing_has_vault" -gt 0 ]] && echo "1" || echo "0")
+        expected_age_present=$([[ "$expected_has_age" -gt 0 ]] && echo "1" || echo "0")
+        expected_pgp_present=$([[ "$expected_has_pgp" -gt 0 ]] && echo "1" || echo "0")
+        expected_vault_present=$([[ "$expected_has_vault" -gt 0 ]] && echo "1" || echo "0")
+
+        if [[ "$existing_age_present" != "$expected_age_present" ]] || \
+           [[ "$existing_pgp_present" != "$expected_pgp_present" ]] || \
+           [[ "$existing_vault_present" != "$expected_vault_present" ]]; then
+          echo -e "\033[1;33m      Encryption key types changed, regenerating\033[m"
           needs_regeneration=true
         fi
 
@@ -237,13 +262,15 @@ let
 
   # Generate binary SOPS file
   generateBinarySecretScript =
-    sopsAgeKeyFiles: secret:
+    sopsAgeKeyFiles: secret: creationRules:
     let
       outputDir = builtins.unsafeDiscardStringContext (toString secret.hostConfig.age.sops.outputDir);
       relativeOutputDir = relativeToFlake outputDir;
       outputPath = "${relativeOutputDir}/${secret.sopsOutput.file}.enc";
       # Convert rekeyFile to relative path
       rekeyFileRelative = relativeToFlake secret.rekeyFile;
+      # Serialize creation_rules for comparison
+      creationRulesJson = builtins.toJSON creationRules;
     in
     ''
       echo -e "\033[1;32m  Generating\033[m \033[90mbinary SOPS file \033[34m${secret.name}\033[m"
@@ -264,9 +291,32 @@ let
         '') sopsAgeKeyFiles}
         export SOPS_AGE_KEY_FILE="$SOPS_KEY_FILE"
 
-        # Check if .sops.yaml is newer than the encrypted file (config changed)
-        if [[ ${escapeShellArg "${relativeOutputDir}/.sops.yaml"} -nt ${escapeShellArg outputPath} ]]; then
-          echo -e "\033[1;33m      .sops.yaml changed, regenerating\033[m"
+        # Check if encryption keys/recipients changed by comparing SOPS metadata
+        expected_creation_rules=${escapeShellArg creationRulesJson}
+
+        # Extract what key types are present in the existing file
+        existing_has_age=$(${pkgs.yq-go}/bin/yq eval '.sops.age // [] | length' ${escapeShellArg outputPath} 2>/dev/null || echo "0")
+        existing_has_pgp=$(${pkgs.yq-go}/bin/yq eval '.sops.pgp // [] | length' ${escapeShellArg outputPath} 2>/dev/null || echo "0")
+        existing_has_vault=$(${pkgs.yq-go}/bin/yq eval '.sops.hc_vault // [] | length' ${escapeShellArg outputPath} 2>/dev/null || echo "0")
+
+        # Check what the expected creation_rules specify
+        expected_has_age=$(echo "$expected_creation_rules" | ${pkgs.jq}/bin/jq '[.[] | select(.age)] | length')
+        expected_has_pgp=$(echo "$expected_creation_rules" | ${pkgs.jq}/bin/jq '[.[] | select(.pgp)] | length')
+        expected_has_vault=$(echo "$expected_creation_rules" | ${pkgs.jq}/bin/jq '[.[] | select(.hc_vault_transit_uri)] | length')
+
+        # If key type presence differs, regenerate
+        # Convert to boolean: has keys (>0) vs no keys (==0)
+        existing_age_present=$([[ "$existing_has_age" -gt 0 ]] && echo "1" || echo "0")
+        existing_pgp_present=$([[ "$existing_has_pgp" -gt 0 ]] && echo "1" || echo "0")
+        existing_vault_present=$([[ "$existing_has_vault" -gt 0 ]] && echo "1" || echo "0")
+        expected_age_present=$([[ "$expected_has_age" -gt 0 ]] && echo "1" || echo "0")
+        expected_pgp_present=$([[ "$expected_has_pgp" -gt 0 ]] && echo "1" || echo "0")
+        expected_vault_present=$([[ "$expected_has_vault" -gt 0 ]] && echo "1" || echo "0")
+
+        if [[ "$existing_age_present" != "$expected_age_present" ]] || \
+           [[ "$existing_pgp_present" != "$expected_pgp_present" ]] || \
+           [[ "$existing_vault_present" != "$expected_vault_present" ]]; then
+          echo -e "\033[1;33m      Encryption key types changed, regenerating\033[m"
           needs_regeneration=true
         fi
 
@@ -395,9 +445,17 @@ let
         echo -e "\033[1;36m   Generating SOPS files for\033[m \033[32m${hostName}\033[m"
 
         # Write .sops.yaml to outputDir for manual SOPS operations (sops edit, sops -d)
+        # Only update if content changed to preserve timestamps for optimization
         mkdir -p ${escapeShellArg relativeOutputDir}
-        printf '%s\n' ${escapeShellArg (generateSopsYamlContent creationRules)} > ${escapeShellArg "${relativeOutputDir}/.sops.yaml"}
-        echo -e "\033[1;32m  Generated\033[m \033[90m.sops.yaml in \033[34m${relativeOutputDir}\033[m"
+        new_sops_yaml=${escapeShellArg (generateSopsYamlContent creationRules)}
+        sops_yaml_path=${escapeShellArg "${relativeOutputDir}/.sops.yaml"}
+
+        if [[ ! -f "$sops_yaml_path" ]] || ! echo "$new_sops_yaml" | diff -q "$sops_yaml_path" - >/dev/null 2>&1; then
+          printf '%s\n' "$new_sops_yaml" > "$sops_yaml_path"
+          echo -e "\033[1;32m  Updated\033[m \033[90m.sops.yaml in \033[34m${relativeOutputDir}\033[m"
+        else
+          echo -e "\033[1;90m  .sops.yaml unchanged in \033[34m${relativeOutputDir}\033[m"
+        fi
         SOPS_FILES+=("${relativeOutputDir}/.sops.yaml")
 
         # Generate grouped YAML files
@@ -409,7 +467,7 @@ let
         )}
 
         # Generate binary files
-        ${concatMapStrings (generateBinarySecretScript sopsAgeKeyFiles) binarySecrets}
+        ${concatMapStrings (secret: generateBinarySecretScript sopsAgeKeyFiles secret creationRules) binarySecrets}
       '';
 
   # Appended to PATH
