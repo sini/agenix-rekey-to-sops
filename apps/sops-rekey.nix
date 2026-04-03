@@ -146,17 +146,8 @@ let
         '') sopsAgeKeyFiles}
         export SOPS_AGE_KEY_FILE="$SOPS_KEY_FILE"
 
-        # Check if SOPS recipients have changed by comparing the sops.age section
-        existing_recipients=$(${pkgs.yq-go}/bin/yq eval '.sops.age[].recipient' ${escapeShellArg outputPath} 2>/dev/null | sort | tr '\n' ',' | sed 's/,$//' || echo "")
-        expected_recipients=$(echo ${escapeShellArg sopsAgeRecipients} | tr ',' '\n' | sort | tr '\n' ',' | sed 's/,$//')
-
-        if [[ "$existing_recipients" != "$expected_recipients" ]]; then
-          echo -e "\033[1;33m      Recipients changed, regenerating\033[m"
-          needs_regeneration=true
-        fi
-
-        # Check if key set matches
-        if [[ "$needs_regeneration" == false ]]; then
+        # Check if key set matches (this implicitly detects creation_rules changes)
+        if true; then
           existing_keys=$(${pkgs.sops}/bin/sops -d ${escapeShellArg outputPath} 2>/dev/null | ${pkgs.yq-go}/bin/yq eval 'keys | sort | @json' - 2>/dev/null || echo "[]")
           expected_keys=${escapeShellArg expectedKeysJson}
 
@@ -311,14 +302,14 @@ let
       SOPS_FILES+=("${outputPath}")
     '';
 
-  # Generate .sops.yaml content for a set of recipients
-  sopsYamlContent =
-    recipients:
-    concatStringsSep "\n" [
-      "creation_rules:"
-      "  - path_regex: .*"
-      "    age: ${concatStringsSep "," recipients}"
-    ];
+  # Generate .sops.yaml content from creation_rules
+  generateSopsYamlContent =
+    creationRules:
+    let
+      sopsYamlFormat = pkgs.formats.yaml { };
+      yamlFile = sopsYamlFormat.generate "sops.yaml" { creation_rules = creationRules; };
+    in
+    builtins.readFile yamlFile;
 
   # Generate commands for a single nixidy host
   commandsForNixidyHost =
@@ -328,10 +319,36 @@ let
       hostMasterIdentities = hostCfg.config.age.rekey.masterIdentities or [ ];
       extractedRecipients = unique (builtins.map extractRecipient hostMasterIdentities);
 
-      # Use explicit recipients if provided, otherwise fall back to extracted ones
-      configRecipients = hostCfg.config.age.sops.recipients or null;
-      hostRecipients = if configRecipients != null then configRecipients else extractedRecipients;
-      sopsAgeRecipients = concatStringsSep "," hostRecipients;
+      # Determine creation_rules to use
+      creationRules =
+        if hostCfg.config.age.sops.creation_rules or null != null then
+          # User provided custom creation_rules
+          hostCfg.config.age.sops.creation_rules
+        else
+          # Default: use extracted recipients from masterIdentities
+          [
+            {
+              path_regex = ".*";
+              age = extractedRecipients;
+            }
+          ];
+
+      # For backward compatibility with encryption commands, extract age recipients
+      # This is used for the --age parameter in sops -e commands
+      sopsAgeRecipients =
+        let
+          # Extract age recipients from first creation rule that has age field
+          ageRulesWithAge = builtins.filter (r: r ? age) creationRules;
+          ageRecipients =
+            if ageRulesWithAge != [ ] then
+              let
+                firstAgeRule = builtins.head ageRulesWithAge;
+              in
+              if builtins.isList firstAgeRule.age then firstAgeRule.age else [ firstAgeRule.age ]
+            else
+              extractedRecipients;
+        in
+        concatStringsSep "," ageRecipients;
 
       # Concatenate all master identity files for SOPS decryption
       # SOPS can use a single file containing multiple identities
@@ -383,7 +400,7 @@ let
 
         # Write .sops.yaml to outputDir for manual SOPS operations (sops edit, sops -d)
         mkdir -p ${escapeShellArg relativeOutputDir}
-        printf '%s\n' ${escapeShellArg (sopsYamlContent hostRecipients)} > ${escapeShellArg "${relativeOutputDir}/.sops.yaml"}
+        printf '%s\n' ${escapeShellArg (generateSopsYamlContent creationRules)} > ${escapeShellArg "${relativeOutputDir}/.sops.yaml"}
         echo -e "\033[1;32m  Generated\033[m \033[90m.sops.yaml in \033[34m${relativeOutputDir}\033[m"
         SOPS_FILES+=("${relativeOutputDir}/.sops.yaml")
 
