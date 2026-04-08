@@ -215,6 +215,48 @@ in
             '';
             example = "secrets";
           };
+
+          creation_rules = mkOption {
+            type = types.nullOr (types.listOf types.attrs);
+            default = null;
+            description = ''
+              Custom SOPS creation_rules for this environment.
+
+              If specified, these rules are directly converted to YAML and used
+              in the .sops.yaml configuration.
+
+              If null (default), a simple age-based creation rule is auto-generated
+              using recipients extracted from masterIdentities.
+
+              This option provides full flexibility for any SOPS feature:
+              - Multiple key types (age, pgp, etc.)
+              - HashiCorp Vault integration
+              - Cloud KMS (AWS, GCP, Azure)
+              - Path-specific encryption rules
+              - Any future SOPS features
+            '';
+            example = literalExpression ''
+              [
+                {
+                  # Encrypt everything with age + vault
+                  path_regex = ".*";
+                  age = [
+                    "age1ci_server_key..."
+                    "age1another_key..."
+                  ];
+                  hc_vault_transit_uri = "https://vault.example.com/v1/transit/keys/sops";
+                }
+                {
+                  # Sensitive files also encrypted with PGP
+                  path_regex = ".*sensitive.*\\.yaml$";
+                  age = "age1ci_server_key...";
+                  pgp = [
+                    "FBC7B9E2A4F9289AC0C1D4843D16CEE4A27381B4"
+                  ];
+                }
+              ]
+            '';
+          };
         };
       };
       description = ''

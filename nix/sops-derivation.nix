@@ -55,12 +55,25 @@ let
   sopsRecipients = unique (builtins.map extractRecipient masterIdentities);
   sopsAgeRecipients = concatStringsSep "," sopsRecipients;
 
-  # Generate .sops.yaml content
-  sopsYamlContent = concatStringsSep "\n" [
-    "creation_rules:"
-    "  - path_regex: .*"
-    "    age: ${sopsAgeRecipients}"
-  ];
+  # Determine creation_rules to use
+  creationRules =
+    if cfg.sops.creation_rules != null then
+      # User provided custom creation_rules
+      cfg.sops.creation_rules
+    else
+      # Default: use extracted recipients from masterIdentities
+      [
+        {
+          path_regex = ".*";
+          age = sopsRecipients;
+        }
+      ];
+
+  # Generate .sops.yaml content from creation_rules
+  sopsYamlFormat = pkgs.formats.yaml { };
+  sopsYamlContent = builtins.readFile (
+    sopsYamlFormat.generate "sops.yaml" { creation_rules = creationRules; }
+  );
 
   # Filter secrets with SOPS output configured
   sopsSecrets = filterAttrs (
