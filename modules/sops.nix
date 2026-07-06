@@ -151,7 +151,26 @@ in
                           else
                             toString sopsSecrets
                         else if cfg.sops.outputDir != null then
-                          builtins.unsafeDiscardStringContext (toString cfg.sops.outputDir)
+                          # Re-import the sops output directory as a content-addressed
+                          # store path, so the ref is keyed on the encrypted files'
+                          # CONTENT rather than on the enclosing flake source. Using the
+                          # raw `toString outputDir` embeds `${self}` (the whole flake
+                          # source hash) into every `ref+sops://...`, so any unrelated
+                          # repo edit changes it and rebuilds every rendered manifest.
+                          # `outputDir` itself is left untouched — the sops-rekey writer
+                          # still relativizes it — so only the ref string is stabilized.
+                          # Falls back to the raw path pre-bootstrap (dir not yet created).
+                          builtins.unsafeDiscardStringContext (
+                            toString (
+                              if builtins.pathExists cfg.sops.outputDir then
+                                builtins.path {
+                                  path = cfg.sops.outputDir;
+                                  name = "sops-secrets";
+                                }
+                              else
+                                cfg.sops.outputDir
+                            )
+                          )
                         else
                           throw "age.secrets.${name}.sopsRef: outputDir must be set when storageMode = \"local\"";
 
